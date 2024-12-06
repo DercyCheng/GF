@@ -119,15 +119,6 @@ def shap_analysis(model, X, feature_columns, target_column, dataset_name, model_
     plt.show()
     plt.close()
 
-def print_statistics(y, sample_type):
-    n = len(y)
-    min_val = np.min(y)
-    max_val = np.max(y)
-    mean_val = np.mean(y)
-    std_val = np.std(y)
-    cv = (std_val / mean_val) * 100
-    print(f"{sample_type} - 样本量: {n}, 最小值(g/kg): {min_val:.2f}, 最大值(g/kg): {max_val:.2f}, 平均值(g/kg): {mean_val:.2f}, 标准差(g/kg): {std_val:.2f}, 变异系数(%): {cv:.2f}")
-
 def main():
     file_paths = [
         ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
@@ -144,16 +135,11 @@ def main():
         X = preprocess_data(X)
 
         for target_column, y in y_dict.items():
-            print_statistics(y, "总体样本")
             for model_name in model_names:
                 print(f"Processing {target_column} from {dataset_name} using {model_name}")
-                if model_name == "SVM":
-                    X_pca = perform_pca(X)
-                    model, train_metrics, test_metrics = train_model(X_pca, y, model_name)
-                    shap_analysis(model, X_pca, feature_columns, target_column, dataset_name, model_name)
-                else:
-                    model, train_metrics, test_metrics = train_model(X, y, model_name)
-                    shap_analysis(model, X, feature_columns, target_column, dataset_name, model_name)
+                X_pca = perform_pca(X)
+                model, train_metrics, test_metrics = train_model(X_pca, y, model_name)
+                shap_analysis(model, X_pca, feature_columns, target_column, dataset_name, model_name)
                 results.append((dataset_name, target_column, model_name, train_metrics, test_metrics))
 
     headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
