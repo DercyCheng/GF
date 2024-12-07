@@ -122,7 +122,7 @@ def shap_analysis(model, X, feature_columns, target_column, dataset_name, model_
 def main():
     file_paths = [
         ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNDBE"),
+        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
         ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
         ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
     ]

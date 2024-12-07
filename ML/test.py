@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, PowerTransformer
 from sklearn.model_selection import train_test_split, GridSearchCV, KFold
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.svm import SVR
@@ -12,6 +12,9 @@ from sklearn.decomposition import PCA
 import shap
 from tabulate import tabulate
 import xgboost as xgb
+from sklearn.linear_model import Ridge, Lasso  # 添加导入
+import lime
+import lime.lime_tabular  # 添加导入
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
@@ -44,7 +47,10 @@ def preprocess_data(X):
     imputer = SimpleImputer(strategy='mean')
     X = imputer.fit_transform(X)
     scaler = StandardScaler()
-    return scaler.fit_transform(X)
+    X_scaled = scaler.fit_transform(X)
+    pt = PowerTransformer(method='yeo-johnson')
+    X_transformed = pt.fit_transform(X_scaled)
+    return X_transformed
 
 def perform_pca(X, n_components=10):
     pca = PCA(n_components=n_components)
@@ -85,7 +91,7 @@ def train_model(X, y, model_name):
             'subsample': [0.7, 0.8, 0.9, 1.0],
             'colsample_bytree': [0.7, 0.8, 0.9, 1.0]
         }
-        model = xgb.XGBRegressor(random_state=42)
+        model = xgb.XGBRegressor(random_state=42, tree_method='gpu_hist', gpu_id=0)
     elif model_name == "PLSR":
         param_grid = {'n_components': [2, 5, 10, 15, 20, 25, 30]}
         model = PLSRegression()
@@ -97,12 +103,18 @@ def train_model(X, y, model_name):
             'gamma': ['scale', 'auto']
         }
         model = SVR()
+    elif model_name == "Ridge":
+        param_grid = {'alpha': [0.1, 1, 10, 100, 1000]}
+        model = Ridge()
+    elif model_name == "Lasso":
+        param_grid = {'alpha': [0.1, 1, 10, 100, 1000]}
+        model = Lasso()
 
-    grid_search = GridSearchCV(model, param_grid, cv=5, scoring='r2', n_jobs=-1)
+    grid_search = GridSearchCV(model, param_grid, cv=10, scoring='r2', n_jobs=-1)
     grid_search.fit(X, y)
     best_model = grid_search.best_estimator_
 
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    kf = KFold(n_splits=10, shuffle=True, random_state=42)
     r2_scores_train, rmse_scores_train, rpd_scores_train = [], [], []
     r2_scores_test, rmse_scores_test, rpd_scores_test = [], [], []
 
@@ -142,15 +154,26 @@ def shap_analysis(model, X, feature_columns, target_column, dataset_name, model_
     plt.show()
     plt.close()
 
+def lime_analysis(model, X, feature_columns, target_column, dataset_name, model_name):
+    explainer = lime.lime_tabular.LimeTabularExplainer(X, feature_names=feature_columns, class_names=[target_column], verbose=True, mode='regression')
+    i = np.random.randint(0, X.shape[0])
+    exp = explainer.explain_instance(X[i], model.predict, num_features=10)
+    print(f"Calculating LIME values for {target_column} ({model_name}) - {dataset_name}")
+    fig = exp.as_pyplot_figure()
+    plt.title(f"LIME - {target_column} ({model_name}) - {dataset_name}")
+    plt.show()
+    # fig.savefig(f"lime_scatter_{dataset_name}_{target_column}_{model_name}.png")
+    plt.close()
+
 def main():
     file_paths = [
         ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNDBE"),
+        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
         ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
         ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
     ]
     target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)", "水溶性有机碳(mg/g)"]
-    model_names = ["Random Forest", "Gradient Boosting", "XGBoost", "PLSR", "SVM"]
+    model_names = ["Random Forest", "Gradient Boosting", "XGBoost", "PLSR", "SVM", "Ridge", "Lasso"]
     results = []
 
     for file_path, dataset_name in file_paths:
@@ -163,6 +186,7 @@ def main():
                 X_pca = perform_pca(X)
                 model, train_metrics, test_metrics = train_model(X_pca, y, model_name)
                 shap_analysis(model, X_pca, feature_columns, target_column, dataset_name, model_name)
+                lime_analysis(model, X_pca, feature_columns, target_column, dataset_name, model_name)  # 添加 LIME 分析
                 results.append((dataset_name, target_column, model_name, train_metrics, test_metrics))
 
     headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
