@@ -12,10 +12,10 @@ from sklearn.metrics import r2_score, mean_squared_error
 from tabulate import tabulate
 from torchvision.models import resnet18
 from torch.nn.utils.parametrizations import weight_norm
+from sklearn.decomposition import PCA
 import shap
 import lime
 import lime.lime_tabular
-from sklearn.decomposition import PCA
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
@@ -60,7 +60,7 @@ class SEBlock(nn.Module):
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Sequential(
             nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),  # 修改 inplace 参数
             nn.Linear(channel // reduction, channel, bias=False),
             nn.Sigmoid()
         )
@@ -94,7 +94,7 @@ class CBAMBlock(nn.Module):
         self.max_pool = nn.AdaptiveMaxPool1d(1)
         self.fc = nn.Sequential(
             nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),  # 修改 inplace 参数
             nn.Linear(channel // reduction, channel, bias=False)
         )
         self.sigmoid_channel = nn.Sigmoid()
@@ -129,10 +129,11 @@ class CNNWithAttention(nn.Module):
         self.bn4 = nn.BatchNorm1d(256)
         self.conv5 = nn.Conv1d(256, 512, kernel_size=3, padding=1)
         self.bn5 = nn.BatchNorm1d(512)
-        self.conv6 = nn.Conv1d(512, 1024, kernel_size=3, padding=1)  # 新增卷积层
+        self.conv6 = nn.Conv1d(512, 1024, kernel_size=3, padding=1)
         self.bn6 = nn.BatchNorm1d(1024)
         self.pool = nn.MaxPool1d(kernel_size=2, stride=2)
         self.dropout = nn.Dropout(0.5)
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
 
         self.attention_type = attention_type
         if (attention_type == 'SE'):
@@ -159,15 +160,14 @@ class CNNWithAttention(nn.Module):
         else:
             self.attention1 = self.attention2 = self.attention3 = self.attention4 = self.attention5 = self.attention6 = None
 
-        conv_output_dim = input_dim // 64  # 更新输出维度
-        self.fc1 = nn.Linear(1024 * conv_output_dim, 1024)  # 更新全连接层
+        self.fc1 = nn.Linear(1024, 1024)  # 更新全连接层
         self.fc2 = nn.Linear(1024, 512)
         self.fc3 = nn.Linear(512, 256)
         self.fc4 = nn.Linear(256, 128)
         self.fc5 = nn.Linear(128, 1)  # 新增全连接层
-        self.relu = nn.ReLU()
-        self.leaky_relu = nn.LeakyReLU()
-        self.elu = nn.ELU()
+        self.relu = nn.ReLU(inplace=False)          # 修改 inplace 参数
+        self.leaky_relu = nn.LeakyReLU(inplace=False)
+        self.elu = nn.ELU(inplace=False)
 
     def forward(self, x):
         x = self.leaky_relu(self.bn1(self.conv1(x)))
@@ -193,7 +193,7 @@ class CNNWithAttention(nn.Module):
         x = self.leaky_relu(self.bn6(self.conv6(x)))  # 新增前向传播
         if self.attention6:
             x = self.attention6(x)
-        x = self.pool(x)
+        x = self.adaptive_pool(x)
         x = x.view(x.size(0), -1)
         x = self.dropout(x)
         x = self.elu(self.fc1(x))
@@ -231,19 +231,19 @@ class TemporalBlock(nn.Module):
         self.conv1 = weight_norm(nn.Conv1d(n_inputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
         self.chomp1 = Chomp1d(padding)
-        self.relu1 = nn.ReLU()
+        self.relu1 = nn.ReLU(inplace=False)  # 修改 inplace 参数
         self.dropout1 = nn.Dropout(dropout)
 
         self.conv2 = weight_norm(nn.Conv1d(n_outputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
         self.chomp2 = Chomp1d(padding)
-        self.relu2 = nn.ReLU()
+        self.relu2 = nn.ReLU(inplace=False)  # 修改 inplace 参数
         self.dropout2 = nn.Dropout(dropout)
 
         self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
                                  self.conv2, self.chomp2, self.relu2, self.dropout2)
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU(inplace=False)   # 修改 inplace 参数
         self.init_weights()
 
     def init_weights(self):
@@ -377,28 +377,47 @@ def plot_results(y_true, y_pred, title):
     plt.grid(True)
     plt.show()
 
-def shap_analysis(model, X):
-    pca = PCA(n_components=10)
-    X_pca = pca.fit_transform(X)
+def shap_analysis(model, X, feature_names, target_column, model_type, attention_type, dataset_name):
     model.eval()
-    with torch.no_grad():
-        explainer = shap.DeepExplainer(model, torch.tensor(X_pca, dtype=torch.float32).unsqueeze(1).to(device))
-        shap_values = explainer.shap_values(torch.tensor(X_pca, dtype=torch.float32).unsqueeze(1).to(device))
-    shap.summary_plot(shap_values, X_pca, plot_type="bar")
-    shap.dependence_plot(0, shap_values, X_pca)
+    explainer = shap.GradientExplainer(model, torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device))
+    shap_values = explainer.shap_values(torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device))
+    if isinstance(shap_values, list):
+        shap_values = shap_values[0]
+    if shap_values.ndim > 2:
+        shap_values = shap_values.squeeze()
+    # 将 X 转换为带有特征名称的 DataFrame
+    X_df = pd.DataFrame(X, columns=feature_names)
+    plt.figure()
+    plt.title(f"SHAP - {target_column} ({attention_type}-{model_type}) - {dataset_name}")
+    shap.summary_plot(shap_values, X_df)
+    plt.show()
+    plt.close()
 
-def lime_analysis(model, X, y):
+def lime_analysis(model, X, y, feature_names, target_column, model_type, attention_type, dataset_name):
     pca = PCA(n_components=10)
     X_pca = pca.fit_transform(X)
-    explainer = lime.lime_tabular.LimeTabularExplainer(X_pca, mode='regression', feature_names=[f'Feature {i}' for i in range(X_pca.shape[1])])
+    # 使用主成分名称作为特征名称
+    pca_feature_names = [f'PC{i+1}' for i in range(X_pca.shape[1])]
+    explainer = lime.lime_tabular.LimeTabularExplainer(
+        X_pca, mode='regression', feature_names=pca_feature_names, verbose=True
+    )
     i = np.random.randint(0, X_pca.shape[0])
     model.eval()
     with torch.no_grad():
-        exp = explainer.explain_instance(X_pca[i], lambda x: model(torch.tensor(x, dtype=torch.float32).unsqueeze(1).to(device)).cpu().detach().numpy().flatten(), num_features=10)
-    exp.show_in_notebook(show_table=True)
-    exp.as_pyplot_figure()
+        # 定义预测函数，先逆变换回原始空间，再输入模型
+        def predict_fn(x):
+            x_original = pca.inverse_transform(x)
+            x_tensor = torch.tensor(x_original, dtype=torch.float32).unsqueeze(1).to(device)
+            return model(x_tensor).cpu().numpy().flatten()
+        exp = explainer.explain_instance(
+            X_pca[i], predict_fn, num_features=10
+        )
+    # 生成并显示散点图
+    fig = exp.as_pyplot_figure()
+    plt.title(f"LIME - {target_column} ({attention_type}-{model_type}) - {dataset_name}")
+    plt.show()
 
-def evaluate_model(model, X, y, title="模型评估"):
+def evaluate_model(model, X, y, feature_columns, target_column, model_type, attention_type, dataset_name, title="模型评估"):
     model.eval()
     with torch.no_grad():
         X_tensor = torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device)
@@ -406,18 +425,16 @@ def evaluate_model(model, X, y, title="模型评估"):
         y_pred = model(X_tensor).squeeze().cpu().numpy()
     r2 = r2_score(y, y_pred)
     rmse = np.sqrt(mean_squared_error(y, y_pred))   # 转换为 g·kg⁻¹
-    rpd = np.std(y) / rmse
+    rpd =np.std(y) / rmse
     
-    # 当 R² 大于 0.7 时才生成散点图
+    # 当 R² 大于 0.7 时，生成散点图
     if 0.9 < r2 <= 0.99 :
         plot_results(y, y_pred, title)
-    
-    # # 添加 SHAP 和 LIME 分析
-    # shap_analysis(model, X)
-    # lime_analysis(model, X, y)
+        # 添加 SHAP 和 LIME 分析
+        shap_analysis(model, X, feature_columns, target_column, model_type, attention_type, dataset_name)
+        # lime_analysis(model, X, y, feature_columns, target_column, model_type, model_name, dataset_name)
     
     return r2, rmse, rpd
-
 
 def main():
     file_paths = [
@@ -440,7 +457,7 @@ def main():
                 for attention_type in ["Origin", 'SE', 'ECA', 'CBAM']:
                     print(f"Training {model_type} with attention type: {attention_type}")
                     model = train_model(X_train, y_train, X_val, y_val, input_dim=X.shape[1], model_type=model_type, attention_type=attention_type)
-                    test_metrics = evaluate_model(model, X_val, y_val, title=f"{dataset_name} - {target_column} - Test - {attention_type} - {model_type}")
+                    test_metrics = evaluate_model(model, X_val, y_val, feature_columns, target_column, model_type, attention_type, dataset_name, title=f"{dataset_name} - {target_column} - Test - {attention_type} - {model_type}")
                     results.append((dataset_name, target_column, f"{model_type}_{attention_type}", test_metrics))
     
     headers = ["Dataset", "Target", "Model", "Test R²", "Test RMSE", "Test RPD"]
@@ -450,10 +467,8 @@ def main():
                     # results.append((dataset_name, target_column, f"{model_type}_{attention_type}", train_metrics, test_metrics))
     # headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
     # table = [[dataset_name, target_column, model_name, f"{train_metrics[0]:.4f}", f"{train_metrics[1]:.4f}",
-    #           f"{train_metrics[2]:.4f}", f"{test_metrics[0]:.4f}", f"{test_metrics[1]:.4f}", f"{test_metrics[2]:.4f}"]
+    #           f"{train_metrics[2]::.4f}", f"{test_metrics[0]:.4f}", f"{test_metrics[1]:.4f}", f"{test_metrics[2]:.4f}"]
     #          for dataset_name, target_column, model_name, train_metrics, test_metrics in results]
-
-  
 
     print("\nResults Summary:")
     print(tabulate(table, headers=headers, tablefmt="grid"))
