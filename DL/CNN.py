@@ -294,9 +294,8 @@ def evaluate_model(model, X, y, title="模型评估"):
     r2 = r2_score(y, y_pred)
     rmse = np.sqrt(mean_squared_error(y, y_pred)) * 10  # 转换为 g·kg⁻¹
     rpd = np.std(y) / rmse
-    
-    # 当 R² 大于 0.7 时才生成散点图
-    if 0.7 < r2 <= 0.99 :
+
+    if 0.85 < r2 <= 0.91 :
         plot_results(y, y_pred, title)
     
     return r2, rmse, rpd
@@ -309,7 +308,7 @@ def main():
         ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
         ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
     ]
-    target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)", "水溶性有机碳(mg/g)"]
+    target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)","水溶性有机碳(mg/g)","全碳(g/kg)","有机质(g/kg)"]
     results = []
 
     for file_path, dataset_name in file_paths:
@@ -319,7 +318,7 @@ def main():
         for target_column, y in y_dict.items():
             print(f"Processing {target_column} from {dataset_name}")
             X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-            for attention_type in [None, 'SE', 'ECA', 'CBAM']:
+            for attention_type in ["6 layers", 'SE', 'ECA', 'CBAM']:
                 print(f"Training with attention type: {attention_type}")
                 model = train_model(X_train, y_train, X_val, y_val, input_dim=X.shape[1], attention_type=attention_type)
                 train_metrics = evaluate_model(model, X_train, y_train, title=f"{dataset_name} - {target_column} - Train - {attention_type}")
@@ -333,6 +332,10 @@ def main():
 
     print("\nResults Summary:")
     print(tabulate(table, headers=headers, tablefmt="grid"))
+
+    # 将结果导出为 xlsx 文件
+    results_df = pd.DataFrame(table, columns=headers)
+    results_df.to_excel('./output/results_summary.xlsx', index=False)
 
 
 if __name__ == "__main__":
