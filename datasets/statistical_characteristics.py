@@ -11,7 +11,7 @@ def print_statistics(y, sample_type):
     cv = (std_val / mean_val) * 100
     return [sample_type, n, f"{min_val:.2f}", f"{max_val:.2f}", f"{mean_val:.2f}", f"{std_val:.2f}", f"{cv:.2f}"]
 
-target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)","全碳(g/kg)","水溶性有机碳(mg/g)"]
+target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)","全碳(g/kg)","水溶性有机碳(mg/g)","有机质(g/kg)"]
 
 file_paths = [
     ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),

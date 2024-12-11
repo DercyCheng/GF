@@ -18,9 +18,10 @@ from tabulate import tabulate
 from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision.models import resnet18
+from torchvision.models import densenet121  # 添加 Densenet 导入
 
 # 设置中文字体
-plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'Microsoft YaHei', 'STFangsong']
+plt.rcParams['font.sans-serif'] = ['/kaggle/input/fonts-on-mac/Fonts/Arial Unicode.ttf']
 plt.rcParams['axes.unicode_minus'] = False
 
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
@@ -219,6 +220,19 @@ class ResNet18(nn.Module):
         return x
 
 
+class DenseNet(nn.Module):
+    def __init__(self):
+        super(DenseNet, self).__init__()
+        self.densenet = densenet121(weights=None)  # 修改为使用 weights 参数
+        self.densenet.features.conv0 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.densenet.classifier = nn.Linear(self.densenet.classifier.in_features, 1)
+
+    def forward(self, x):
+        x = x.unsqueeze(1)  # 添加这一行以确保输入有正确的通道数
+        x = self.densenet(x)
+        return x
+
+
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
         super(Chomp1d, self).__init__()
@@ -362,7 +376,7 @@ def sanitize_filename(filename):
 
 def plot_results(y_true, y_pred, title):
     save_title = sanitize_filename(title)
-    save_path = f"output/scatter/{save_title}_scatter.png"
+    save_path = f"/kaggle/working/output/scatter/{save_title}_scatter.png"  # 修改保存路径
     ensure_dir(os.path.dirname(save_path))
     plt.figure(figsize=(8, 8))
     plt.scatter(y_true, y_pred, label='Predicted vs Actual', alpha=0.6)
@@ -386,12 +400,12 @@ def plot_results(y_true, y_pred, title):
     plt.title(title)
     plt.legend()
     plt.grid(True)
-    plt.savefig(save_path)  # 保存图像
-    plt.show()
+    plt.savefig(save_path, bbox_inches='tight')  # 保存图像时使用 bbox_inches='tight'
+    plt.close()  # 使用 plt.close() 代替 plt.show() 以避免在 Kaggle 中显示不正常
 
 def shap_analysis(model, X, feature_names, target_column, model_type, attention_type, dataset_name):
     save_title = sanitize_filename(f"SHAP_{dataset_name}_{target_column}_{attention_type}_{model_type}")
-    save_path = f"output/shap/{save_title}.png"
+    save_path = f"/kaggle/working/output/shap/{save_title}.png"  # 修改保存路径
     ensure_dir(os.path.dirname(save_path))
     model.eval()
     explainer = shap.GradientExplainer(model, torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device))
@@ -412,7 +426,7 @@ def shap_analysis(model, X, feature_names, target_column, model_type, attention_
 
 def lime_analysis(model, X, y, feature_names, target_column, model_type, attention_type, dataset_name):
     save_title = sanitize_filename(f"LIME_{dataset_name}_{target_column}_{attention_type}_{model_type}")
-    save_path = f"output/lime/{save_title}.png"
+    save_path = f"/kaggle/working/output/lime/{save_title}.png"  # 修改保存路径
     ensure_dir(os.path.dirname(save_path))
     model.eval()
     with torch.no_grad():
@@ -448,6 +462,8 @@ def train_model(X, y, input_dim, model_type='CNN', attention_type=None, epochs=1
 
         if model_type == 'ResNet18':
             model = ResNet18().to(device)
+        elif model_type == 'DenseNet':  # 添加 DenseNet 选项
+            model = DenseNet().to(device)
         elif model_type == 'TCN':
             model = TCN(input_dim, [64, 128, 256, 512]).to(device)
         elif model_type == 'VGG7':
@@ -532,10 +548,10 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
 
 def main():
     file_paths = [
-        ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
-        ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
+        ("/kaggle/input/gaofeng-forest-farm-hyperspectral-data/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),  # 修改文件路径
+        ("/kaggle/input/gaofeng-forest-farm-hyperspectral-data/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),  # 修改文件路径
+        ("/kaggle/input/gaofeng-forest-farm-hyperspectral-data/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),  # 修改文件路径
+        ("/kaggle/input/gaofeng-forest-farm-hyperspectral-data/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")  # 修改文件路径
     ]
     target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)","水溶性有机碳(mg/g)","全碳(g/kg)","有机质(g/kg)"]
     results = []
@@ -546,7 +562,7 @@ def main():
 
         for target_column, y in y_dict.items():
             print(f"Processing {target_column} from {dataset_name}")
-            for model_type in ['CNN', 'ResNet18', 'VGG7', 'SATCN']:
+            for model_type in ['CNN', 'ResNet18', 'VGG7', 'SATCN', 'DenseNet']:  # 添加 DenseNet 选项
                 for attention_type in [None, 'SE', 'ECA', 'CBAM']:
                     print(f"Training {model_type} with attention type: {attention_type}")
                     model = train_model(X, y, input_dim=X.shape[1], model_type=model_type, attention_type=attention_type)
@@ -569,7 +585,7 @@ def main():
 
     # 将结果导出为 xlsx 文件
     results_df = pd.DataFrame(table, columns=headers)
-    results_df.to_excel('./output/results_summary.xlsx', index=False)
+    results_df.to_excel('/kaggle/working/output/results_summary.xlsx', index=False)  # 修改保存路径
     
 if __name__ == "__main__":
     main()

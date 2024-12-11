@@ -260,7 +260,7 @@ def train_model(X_train, y_train, X_val, y_val, input_dim, attention_type=None, 
     return model
 
 
-def plot_results(y_true, y_pred, title):
+def plot_results(y_true, y_pred):
     plt.figure(figsize=(8, 8))
     plt.scatter(y_true, y_pred, label='Predicted vs Actual', alpha=0.6)
     plt.plot([min(y_true), max(y_true)], [min(y_true), max(y_true)], 'r--', label='1:1 Line')
@@ -280,7 +280,6 @@ def plot_results(y_true, y_pred, title):
     
     plt.xlabel('Actual')
     plt.ylabel('Predicted')
-    plt.title(title)
     plt.legend()
     plt.grid(True)
     plt.show()
