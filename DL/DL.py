@@ -406,7 +406,12 @@ def shap_analysis(model, X, feature_names, target_column, model_type, attention_
     X_df = pd.DataFrame(X, columns=feature_names)
 
     shap.summary_plot(shap_values, X_df, show=False)
-    plt.title(f"SHAP - {target_column} ({attention_type}-{model_type}) - {dataset_name}")
+    if attention_type is not None:
+        save_title = sanitize_filename(f"SHAP_{dataset_name}_{target_column}_{attention_type}_{model_type}")
+        plt.title(f"SHAP - {target_column} ({attention_type}-{model_type}) - {dataset_name}")
+    else:
+        save_title = sanitize_filename(f"SHAP_{dataset_name}_{target_column}_{model_type}")
+        plt.title(f"SHAP - {target_column} ({model_type}) - {dataset_name}")
     plt.savefig(save_path, bbox_inches='tight')  # 保存图像
     plt.close()
 
@@ -430,7 +435,12 @@ def lime_analysis(model, X, y, feature_names, target_column, model_type, attenti
     # 生成并显示解释结果的图形
     fig = exp.as_pyplot_figure()
     fig.set_size_inches(8, 4)  # 调整图形比例
-    plt.title(f"LIME - {target_column} ({attention_type}-{model_type}) - {dataset_name}")
+    if attention_type is not None:
+        save_title = sanitize_filename(f"LIME_{dataset_name}_{target_column}_{attention_type}_{model_type}")
+        plt.title(f"LIME - {target_column} ({attention_type}-{model_type}) - {dataset_name}")
+    else:
+        save_title = sanitize_filename(f"LIME_{dataset_name}_{target_column}_{model_type}")
+        plt.title(f"LIME - {target_column} ({model_type}) - {dataset_name}")
     plt.tight_layout()  # 确保左侧列名显示完全
     plt.savefig(save_path)  # 保存图像
     plt.show()
@@ -546,18 +556,26 @@ def main():
 
         for target_column, y in y_dict.items():
             print(f"Processing {target_column} from {dataset_name}")
+            # 修改这里，设置 test_size=63
+            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=63, random_state=42)
+            print(f"训练集样本数: {len(X_train)}, 测试集样本数: {len(X_val)}")
             for model_type in ['CNN', 'ResNet18', 'VGG7', 'SATCN']:
                 for attention_type in [None, 'SE', 'ECA', 'CBAM']:
                     print(f"Training {model_type} with attention type: {attention_type}")
-                    model = train_model(X, y, input_dim=X.shape[1], model_type=model_type, attention_type=attention_type)
-                    # 在完整数据集上评估模型
+                    model = train_model(X_train, y_train, input_dim=X.shape[1], model_type=model_type, attention_type=attention_type)
+                    if attention_type is not None:
+                        title = f"{dataset_name} - {target_column} - {attention_type} - {model_type}"
+                        model_name = f"{attention_type}_{model_type}"
+                    else:
+                        title = f"{dataset_name} - {target_column} - {model_type}"
+                        model_name = model_type
                     test_metrics = evaluate_model(
-                        model, X, y, feature_columns, target_column,
+                        model, X_val, y_val, feature_columns, target_column,
                         model_type, attention_type, dataset_name,
-                        title=f"{dataset_name} - {target_column} - {attention_type} - {model_type}", plot=True
+                        title=title, plot=True
                     )
-                    train_metrics = evaluate_model(model, X, y, feature_columns, target_column, model_type, attention_type, dataset_name, title=f"{dataset_name} - {target_column} - Train - {attention_type} - {model_type}", plot=False)
-                    results.append((dataset_name, target_column, f"{model_type}_{attention_type}", train_metrics, test_metrics))
+                    train_metrics = evaluate_model(model, X_train, y_train, feature_columns, target_column, model_type, attention_type, dataset_name, title=f"{dataset_name} - {target_column} - Train - {attention_type} - {model_type}", plot=False)
+                    results.append((dataset_name, target_column, model_name, train_metrics, test_metrics))
     
     headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
     table = [[dataset_name, target_column, model_name, f"{train_metrics[0]:.4f}", f"{train_metrics[1]:.4f}",
