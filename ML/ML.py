@@ -9,16 +9,13 @@ from sklearn.cross_decomposition import PLSRegression
 from sklearn.metrics import r2_score, mean_squared_error
 from sklearn.impute import SimpleImputer
 from sklearn.decomposition import PCA
-import shap
 from tabulate import tabulate
 import xgboost as xgb
 from sklearn.linear_model import Ridge, Lasso  # 添加导入
-import lime
-import lime.lime_tabular  # 添加导入
-import csv
+
 
 # 设置中文字体
-plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
+plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'Microsoft YaHei', 'STFangsong']
 plt.rcParams['axes.unicode_minus'] = False
 
 def load_data(file_path, target_columns):
@@ -144,28 +141,6 @@ def train_model(X, y, model_name):
     best_model.fit(X, y)
     return best_model, (np.mean(r2_scores_train), np.mean(rmse_scores_train), np.mean(rpd_scores_train)), (np.mean(r2_scores_test), np.mean(rmse_scores_test), np.mean(rpd_scores_test))
 
-def shap_analysis(model, X, feature_columns, target_column, dataset_name, model_name):
-    explainer = shap.TreeExplainer(model) if isinstance(model, (RandomForestRegressor, GradientBoostingRegressor, xgb.XGBRegressor)) else shap.KernelExplainer(model.predict, X)
-    print("Calculating SHAP values...")
-    shap_values = explainer.shap_values(X)
-    shap.initjs()
-    plt.figure()
-    plt.title(f"SHAP - {target_column} ({model_name}) - {dataset_name}")
-    shap.summary_plot(shap_values, X, feature_names=feature_columns)
-    plt.show()
-    plt.close()
-
-def lime_analysis(model, X, feature_columns, target_column, dataset_name, model_name):
-    explainer = lime.lime_tabular.LimeTabularExplainer(X, feature_names=feature_columns, class_names=[target_column], verbose=True, mode='regression')
-    i = np.random.randint(0, X.shape[0])
-    exp = explainer.explain_instance(X[i], model.predict, num_features=10)
-    print(f"Calculating LIME values for {target_column} ({model_name}) - {dataset_name}")
-    fig = exp.as_pyplot_figure()
-    plt.title(f"LIME - {target_column} ({model_name}) - {dataset_name}")
-    plt.show()
-    # fig.savefig(f"lime_scatter_{dataset_name}_{target_column}_{model_name}.png")
-    plt.close()
-
 def main():
     file_paths = [
         ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
@@ -185,9 +160,8 @@ def main():
             for model_name in model_names:
                 print(f"Processing {target_column} from {dataset_name} using {model_name}")
                 X_pca = perform_pca(X)
-                model, train_metrics, test_metrics = train_model(X_pca, y, model_name)
-                # shap_analysis(model, X_pca, feature_columns, target_column, dataset_name, model_name)
-                # lime_analysis(model, X_pca, feature_columns, target_column, dataset_name, model_name)  # 添加 LIME 分析
+                X_train, X_test, y_train, y_test = train_test_split(X_pca, y, test_size=63/(215+63), random_state=42)
+                model, train_metrics, test_metrics = train_model(X_train, y_train, model_name)
                 results.append((dataset_name, target_column, model_name, train_metrics, test_metrics))
 
     headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]

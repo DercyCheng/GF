@@ -18,6 +18,9 @@ from tabulate import tabulate
 from torch.nn.utils.parametrizations import weight_norm
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision.models import resnet18
+from torchvision.models import densenet121
+from joblib import Parallel, delayed  # 添加并行计算库
+from tqdm import tqdm  # 添加 tqdm 导入
 
 # 设置中文字体
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'Microsoft YaHei', 'STFangsong']
@@ -25,7 +28,7 @@ plt.rcParams['axes.unicode_minus'] = False
 
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
-def load_data(file_path, target_columns):
+def load_data(file_path, target_columns, train_size=215, random_state=42):
     try:
         data = pd.read_excel(file_path)
         print(f"Data loaded successfully from {file_path}!")
@@ -46,14 +49,26 @@ def load_data(file_path, target_columns):
     y_dict = {target_column: data[target_column].values for target_column in target_columns}
 
     print(f"Number of features: {len(feature_columns)}, Number of samples: {X.shape[0]}")
-    return X, y_dict, feature_columns, band_columns
+
+    # 数据集划分
+    X_train, X_val, y_train_dict, y_val_dict = {}, {}, {}, {}
+    for target_column in target_columns:
+        y = y_dict[target_column]
+        X_train[target_column], X_val[target_column], y_train_dict[target_column], y_val_dict[target_column] = train_test_split(
+            X, y, train_size=train_size, random_state=random_state
+        )
+
+    return X_train, X_val, y_train_dict, y_val_dict, feature_columns, band_columns
 
 
-def preprocess_data(X):
+def preprocess_data(X_dict):
     imputer = SimpleImputer(strategy='mean')
-    X = imputer.fit_transform(X)
     scaler = StandardScaler()
-    return scaler.fit_transform(X)
+    X_processed_dict = {}
+    for key, X in X_dict.items():
+        X = imputer.fit_transform(X)
+        X_processed_dict[key] = scaler.fit_transform(X)
+    return X_processed_dict
 
 
 class SEBlock(nn.Module):
@@ -121,88 +136,59 @@ class CBAMBlock(nn.Module):
 class CNNWithAttention(nn.Module):
     def __init__(self, input_dim, attention_type=None):
         super(CNNWithAttention, self).__init__()
-        self.conv1 = nn.Conv1d(1, 32, kernel_size=5, padding=2)
-        self.bn1 = nn.BatchNorm1d(32)
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)
-        self.bn2 = nn.BatchNorm1d(64)
-        self.conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm1d(128)
-        self.conv4 = nn.Conv1d(128, 256, kernel_size=3, padding=1)
-        self.bn4 = nn.BatchNorm1d(256)
-        self.conv5 = nn.Conv1d(256, 512, kernel_size=3, padding=1)
-        self.bn5 = nn.BatchNorm1d(512)
-        self.conv6 = nn.Conv1d(512, 1024, kernel_size=3, padding=1)
-        self.bn6 = nn.BatchNorm1d(1024)
+        self.conv_layers = nn.ModuleList([
+            nn.Conv1d(1, 32, kernel_size=5, padding=2),
+            nn.Conv1d(32, 64, kernel_size=5, padding=2),
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.Conv1d(128, 256, kernel_size=3, padding=1),
+            nn.Conv1d(256, 512, kernel_size=3, padding=1),
+            nn.Conv1d(512, 1024, kernel_size=3, padding=1)
+        ])
+        self.bn_layers = nn.ModuleList([
+            nn.BatchNorm1d(32),
+            nn.BatchNorm1d(64),
+            nn.BatchNorm1d(128),
+            nn.BatchNorm1d(256),
+            nn.BatchNorm1d(512),
+            nn.BatchNorm1d(1024)
+        ])
         self.pool = nn.MaxPool1d(kernel_size=2, stride=2)
         self.dropout = nn.Dropout(0.5)
         self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
 
         self.attention_type = attention_type
-        if (attention_type == 'SE'):
-            self.attention1 = SEBlock(32)
-            self.attention2 = SEBlock(64)
-            self.attention3 = SEBlock(128)
-            self.attention4 = SEBlock(256)
-            self.attention5 = SEBlock(512)
-            self.attention6 = SEBlock(1024)  # 新增注意力层
-        elif (attention_type == 'ECA'):
-            self.attention1 = ECABlock(32)
-            self.attention2 = ECABlock(64)
-            self.attention3 = ECABlock(128)
-            self.attention4 = ECABlock(256)
-            self.attention5 = ECABlock(512)
-            self.attention6 = ECABlock(1024)  # 新增注意力层
-        elif (attention_type == 'CBAM'):
-            self.attention1 = CBAMBlock(32)
-            self.attention2 = CBAMBlock(64)
-            self.attention3 = CBAMBlock(128)
-            self.attention4 = CBAMBlock(256)
-            self.attention5 = CBAMBlock(512)
-            self.attention6 = CBAMBlock(1024)  # 新���注意力层
+        if attention_type == 'SE':
+            self.attention_layers = nn.ModuleList([SEBlock(ch) for ch in [32, 64, 128, 256, 512, 1024]])
+        elif attention_type == 'ECA':
+            self.attention_layers = nn.ModuleList([ECABlock(ch) for ch in [32, 64, 128, 256, 512, 1024]])
+        elif attention_type == 'CBAM':
+            self.attention_layers = nn.ModuleList([CBAMBlock(ch) for ch in [32, 64, 128, 256, 512, 1024]])
         else:
-            self.attention1 = self.attention2 = self.attention3 = self.attention4 = self.attention5 = self.attention6 = None
+            self.attention_layers = [None] * 6
 
-        self.fc1 = nn.Linear(1024, 1024)  # 更新全连接层
-        self.fc2 = nn.Linear(1024, 512)
-        self.fc3 = nn.Linear(512, 256)
-        self.fc4 = nn.Linear(256, 128)
-        self.fc5 = nn.Linear(128, 1)  # 新增全连接层
-        self.relu = nn.ReLU(inplace=False)          # 修改 inplace 参数
-        self.leaky_relu = nn.LeakyReLU(inplace=False)
-        self.elu = nn.ELU(inplace=False)
+        self.fc_layers = nn.Sequential(
+            nn.Linear(1024, 1024),
+            nn.ELU(inplace=False),
+            nn.Linear(1024, 512),
+            nn.ELU(inplace=False),
+            nn.Linear(512, 256),
+            nn.ELU(inplace=False),
+            nn.Linear(256, 128),
+            nn.ELU(inplace=False),
+            nn.Linear(128, 1)
+        )
+        self.leaky_relu = nn.LeakyReLU(inplace=False)  # 添加 leaky_relu 属性
 
     def forward(self, x):
-        x = self.leaky_relu(self.bn1(self.conv1(x)))
-        if self.attention1:
-            x = self.attention1(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn2(self.conv2(x)))
-        if self.attention2:
-            x = self.attention2(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn3(self.conv3(x)))
-        if self.attention3:
-            x = self.attention3(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn4(self.conv4(x)))
-        if self.attention4:
-            x = self.attention4(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn5(self.conv5(x)))
-        if self.attention5:
-            x = self.attention5(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn6(self.conv6(x)))  # 新增前向传播
-        if self.attention6:
-            x = self.attention6(x)
+        for conv, bn, attn in zip(self.conv_layers, self.bn_layers, self.attention_layers):
+            x = self.leaky_relu(bn(conv(x)))
+            if attn:
+                x = attn(x)
+            x = self.pool(x)
         x = self.adaptive_pool(x)
         x = x.view(x.size(0), -1)
         x = self.dropout(x)
-        x = self.elu(self.fc1(x))
-        x = self.elu(self.fc2(x))
-        x = self.elu(self.fc3(x))
-        x = self.elu(self.fc4(x))
-        x = self.fc5(x)  # 新增前向传播
+        x = self.fc_layers(x)
         return x
 
 
@@ -216,6 +202,19 @@ class ResNet18(nn.Module):
     def forward(self, x):
         x = x.unsqueeze(1)  # 添加这一行以确保输入有正确的通道数
         x = self.resnet(x)
+        return x
+
+
+class DenseNet(nn.Module):
+    def __init__(self):
+        super(DenseNet, self).__init__()
+        self.densenet = densenet121(weights=None)  # 使用 DenseNet121
+        self.densenet.features.conv0 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.densenet.classifier = nn.Linear(self.densenet.classifier.in_features, 1)
+
+    def forward(self, x):
+        x = x.unsqueeze(1)  # 添加这一行以确保输入有正确的通道数
+        x = self.densenet(x)
         return x
 
 
@@ -332,7 +331,7 @@ class VGG7(nn.Module):
 class SATCN(nn.Module):
     def __init__(self, input_dim, num_channels, kernel_size=2, dropout=0.2, attention_type=None):
         super(SATCN, self).__init__()
-        self.tcn = TemporalConvNet(1, num_channels, kernel_size, dropout)  # 修改输入通道数为1
+        self.tcn = TemporalConvNet(1, num_channels, kernel_size, dropout)  # ���改输入通道数为1
         self.attention_type = attention_type
         if attention_type == 'SE':
             self.attention = SEBlock(num_channels[-1])
@@ -351,6 +350,108 @@ class SATCN(nn.Module):
         o = self.linear(y1[:, :, -1])
         return o
 
+
+class LSTMModel(nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_layers, output_dim):
+        super(LSTMModel, self).__init__()
+        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, x):
+        h0 = torch.zeros(self.lstm.num_layers, x.size(0), self.lstm.hidden_size).to(device)
+        c0 = torch.zeros(self.lstm.num_layers, x.size(0), self.lstm.hidden_size).to(device)
+        out, _ = self.lstm(x, (h0, c0))
+        out = self.dropout(out[:, -1, :])
+        out = self.fc(out)
+        return out
+
+class SelfAttention(nn.Module):
+    def __init__(self, input_dim, hidden_dim):
+        super(SelfAttention, self).__init__()
+        self.query = nn.Linear(input_dim, hidden_dim)
+        self.key = nn.Linear(input_dim, hidden_dim)
+        self.value = nn.Linear(input_dim, hidden_dim)
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, x):
+        Q = self.query(x)
+        K = self.key(x)
+        V = self.value(x)
+        attention_weights = self.softmax(torch.bmm(Q, K.transpose(1, 2)) / (K.size(-1) ** 0.5))
+        out = torch.bmm(attention_weights, V)
+        return out
+
+class CNNWithSelfAttention(nn.Module):
+    def __init__(self, input_dim):
+        super(CNNWithSelfAttention, self).__init__()
+        self.conv1 = nn.Conv1d(1, 32, kernel_size=5, padding=2)
+        self.bn1 = nn.BatchNorm1d(32)
+        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)
+        self.bn2 = nn.BatchNorm1d(64)
+        self.conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm1d(128)
+        self.conv4 = nn.Conv1d(128, 256, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm1d(256)
+        self.conv5 = nn.Conv1d(256, 512, kernel_size=3, padding=1)
+        self.bn5 = nn.BatchNorm1d(512)
+        self.conv6 = nn.Conv1d(512, 1024, kernel_size=3, padding=1)
+        self.bn6 = nn.BatchNorm1d(1024)
+        self.pool = nn.MaxPool1d(kernel_size=2, stride=2)
+        self.dropout = nn.Dropout(0.5)
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
+        self.self_attention = SelfAttention(1024, 512)
+
+        self.fc1 = nn.Linear(1024, 1024)
+        self.fc2 = nn.Linear(1024, 512)
+        self.fc3 = nn.Linear(512, 256)
+        self.fc4 = nn.Linear(256, 128)
+        self.fc5 = nn.Linear(128, 1)
+        self.relu = nn.ReLU(inplace=False)
+        self.leaky_relu = nn.LeakyReLU(inplace=False)
+        self.elu = nn.ELU(inplace=False)
+
+    def forward(self, x):
+        x = self.leaky_relu(self.bn1(self.conv1(x)))
+        x = self.pool(x)
+        x = self.leaky_relu(self.bn2(self.conv2(x)))
+        x = self.pool(x)
+        x = self.leaky_relu(self.bn3(self.conv3(x)))
+        x = self.pool(x)
+        x = self.leaky_relu(self.bn4(self.conv4(x)))
+        x = self.pool(x)
+        x = self.leaky_relu(self.bn5(self.conv5(x)))
+        x = self.pool(x)
+        x = self.leaky_relu(self.bn6(self.conv6(x)))
+        x = self.adaptive_pool(x)
+        x = x.view(x.size(0), -1)
+        x = self.self_attention(x.unsqueeze(1)).squeeze(1)
+        x = self.dropout(x)
+        x = self.elu(self.fc1(x))
+        x = self.elu(self.fc2(x))
+        x = self.elu(self.fc3(x))
+        x = self.elu(self.fc4(x))
+        x = self.fc5(x)
+        return x
+
+class TransformerModel(nn.Module):
+    def __init__(self, input_dim, num_heads, num_layers, hidden_dim):
+        super(TransformerModel, self).__init__()
+        self.embedding = nn.Linear(input_dim, hidden_dim)
+        self.transformer = nn.Transformer(
+            d_model=hidden_dim, nhead=num_heads, num_encoder_layers=num_layers, num_decoder_layers=num_layers
+        )
+        self.fc = nn.Linear(hidden_dim, 1)
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, x):
+        x = self.embedding(x)
+        x = x.permute(1, 0, 2)  # Transformer expects input shape (seq_len, batch_size, d_model)
+        x = self.transformer(x, x)
+        x = x.permute(1, 0, 2)
+        x = self.dropout(x[:, -1, :])
+        x = self.fc(x)
+        return x
 
 def ensure_dir(directory):
     if not os.path.exists(directory):
@@ -446,82 +547,115 @@ def lime_analysis(model, X, y, feature_names, target_column, model_type, attenti
     plt.show()
     plt.close()
 
-def train_model(X, y, input_dim, model_type='CNN', attention_type=None, epochs=100, batch_size=32, learning_rate=0.0001):
+def augment_data(X, y):
+    # 数据增强方法
+    noise = np.random.normal(0, 0.01, X.shape)
+    X_augmented = X + noise
+    return np.vstack((X, X_augmented)), np.hstack((y, y))
+
+def train_model(X, y, input_dim, model_type='CNN', attention_type=None, epochs=200, batch_size=32, learning_rate=0.0001):
     # 使用 K 折交叉验证
     kf = KFold(n_splits=5, shuffle=True, random_state=42)
     best_model = None
     best_score = -float('inf')
 
-    for train_index, val_index in kf.split(X):
-        X_train, X_val = X[train_index], X[val_index]
-        y_train, y_val = y[train_index], y[val_index]
+    total_steps = epochs * kf.get_n_splits(X)  # 总的训练步数
+    with tqdm(total=total_steps, desc="Training Progress") as pbar:  # 添加整体训练进度条
+        for train_index, val_index in kf.split(X):
+            X_train, X_val = X[train_index], X[val_index]
+            y_train, y_val = y[train_index], y[val_index]
 
-        if model_type == 'ResNet18':
-            model = ResNet18().to(device)
-        elif model_type == 'TCN':
-            model = TCN(input_dim, [64, 128, 256, 512]).to(device)
-        elif model_type == 'VGG7':
-            model = VGG7(input_dim).to(device)
-        elif model_type == 'SATCN':
-            model = SATCN(input_dim, [64, 128, 256, 512], attention_type=attention_type).to(device)
-        else:
-            model = CNNWithAttention(input_dim, attention_type).to(device)
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate)  # 改用 Adam 优化器
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
+            # 数据增强
+            X_train, y_train = augment_data(X_train, y_train)
 
-        train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32).unsqueeze(1),
-                                      torch.tensor(y_train, dtype=torch.float32))
-        val_dataset = TensorDataset(torch.tensor(X_val, dtype=torch.float32).unsqueeze(1),
-                                    torch.tensor(y_val, dtype=torch.float32))
+            model = get_model(model_type, input_dim, attention_type).to(device)
+            criterion = nn.MSELoss()
+            optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)  # 使用 AdamW 优化器和 L2 正则化
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+            train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32).unsqueeze(1),
+                                          torch.tensor(y_train, dtype=torch.float32))
+            val_dataset = TensorDataset(torch.tensor(X_val, dtype=torch.float32).unsqueeze(1),
+                                        torch.tensor(y_val, dtype=torch.float32))
 
-        best_val_loss = float('inf')
-        patience = 10
-        patience_counter = 0
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+            scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=learning_rate, steps_per_epoch=len(train_loader), epochs=epochs)
 
-        for epoch in range(epochs):  # 增加 epochs 数量
-            model.train()
-            train_loss = 0.0
-            for X_batch, y_batch in train_loader:
-                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-                optimizer.zero_grad()
-                outputs = model(X_batch).squeeze()
-                loss = criterion(outputs, y_batch)
-                loss.backward()
-                optimizer.step()
-                train_loss += loss.item() * X_batch.size(0)
+            best_val_loss = float('inf')
+            patience = 10
+            patience_counter = 0
 
-            train_loss /= len(train_loader.dataset)
-
-            model.eval()
-            val_loss = 0.0
-            with torch.no_grad():
-                for X_batch, y_batch in val_loader:
+            for epoch in range(epochs):  # 增加 epochs 数量
+                model.train()
+                train_loss = 0.0
+                for X_batch, y_batch in train_loader:
                     X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                    optimizer.zero_grad()
                     outputs = model(X_batch).squeeze()
                     loss = criterion(outputs, y_batch)
-                    val_loss += loss.item() * X_batch.size(0)
+                    loss.backward()
+                    optimizer.step()
+                    scheduler.step()
+                    train_loss += loss.item() * X_batch.size(0)
+                    pbar.update(1)  # 更新整体进度条
 
-            val_loss /= len(val_loader.dataset)
-            scheduler.step(val_loss)
+                train_loss /= len(train_loader.dataset)
 
-            print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+                model.eval()
+                val_loss = 0.0
+                with torch.no_grad():
+                    for X_batch, y_batch in val_loader:
+                        X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+                        outputs = model(X_batch).squeeze()
+                        loss = criterion(outputs, y_batch)
+                        val_loss += loss.item() * X_batch.size(0)
 
-        # 验证模型性能
-        val_r2, val_rmse, val_rpd = evaluate_model(
-            model, X_val, y_val, feature_columns=None, target_column=None,
-            model_type=model_type, attention_type=attention_type,
-            dataset_name=None, plot=False
-        )
-        if val_r2 > best_score:
-            best_score = val_r2
-            best_model = model
+                val_loss /= len(val_loader.dataset)
+
+                print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+
+                # 早停法
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    patience_counter = 0
+                    best_model = model
+                else:
+                    patience_counter += 1
+                    if patience_counter >= patience:
+                        print("Early stopping")
+                        break
+
+            # 验证模型性能
+            val_r2, val_rmse, val_rpd = evaluate_model(
+                model, X_val, y_val, feature_columns=None, target_column=None,
+                model_type=model_type, attention_type=attention_type,
+                dataset_name=None, plot=False
+            )
+            if val_r2 > best_score:
+                best_score = val_r2
+                best_model = model
 
     return best_model
 
+def get_model(model_type, input_dim, attention_type):
+    if model_type == 'ResNet18':
+        return ResNet18()
+    elif model_type == 'TCN':
+        return TCN(input_dim, [64, 128, 256, 512])
+    elif model_type == 'VGG7':
+        return VGG7(input_dim)
+    elif model_type == 'SATCN':
+        return SATCN(input_dim, [64, 128, 256, 512], attention_type=attention_type)
+    elif model_type == 'LSTM':
+        return LSTMModel(input_dim, hidden_dim=128, num_layers=2, output_dim=1)
+    elif model_type == 'DenseNet':
+        return DenseNet()
+    elif model_type == 'CNNWithSelfAttention':
+        return CNNWithSelfAttention(input_dim)
+    elif model_type == 'Transformer':
+        return TransformerModel(input_dim, num_heads=8, num_layers=6, hidden_dim=512)
+    else:
+        return CNNWithAttention(input_dim, attention_type)
 
 def evaluate_model(model, X, y, feature_columns, target_column, model_type, attention_type, dataset_name, title="模型评估", plot=False):
     model.eval()
@@ -540,46 +674,43 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
     
     return r2, rmse, rpd
 
-def main():
-    file_paths = [
-        ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
-        ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
-    ]
-    target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)","水溶性有机碳(mg/g)","全碳(g/kg)","有机质(g/kg)"]
+def process_dataset(file_path, dataset_name, target_columns):
+    X_train_dict, X_val_dict, y_train_dict, y_val_dict, feature_columns, band_columns = load_data(file_path, target_columns)
+    X_train_dict = preprocess_data(X_train_dict)
+    X_val_dict = preprocess_data(X_val_dict)
+
     results = []
+    for target_column in target_columns:
+        X_train = X_train_dict[target_column]
+        X_val = X_val_dict[target_column]
+        y_train = y_train_dict[target_column]
+        y_val = y_val_dict[target_column]
+        print(f"Processing {target_column} from {dataset_name}")
+        print(f"训练集样本数: {len(X_train)}, 测试集样本数: {len(X_val)}")
+        def train_and_evaluate(model_type, attention_type):
+            print(f"Training {model_type} with attention type: {attention_type}")
+            model = train_model(X_train, y_train, input_dim=X_train.shape[1], model_type=model_type, attention_type=attention_type)
+            if attention_type is not None:
+                title = f"{dataset_name} - {target_column} - {attention_type} - {model_type}"
+                model_name = f"{attention_type}_{model_type}"
+            else:
+                title = f"{dataset_name} - {target_column} - {model_type}"
+                model_name = model_type
+            test_metrics = evaluate_model(
+                model, X_val, y_val, feature_columns, target_column,
+                model_type, attention_type, dataset_name,
+                title=title, plot=True
+            )
+            train_metrics = evaluate_model(model, X_train, y_train, feature_columns, target_column, model_type, attention_type, dataset_name, title=f"{dataset_name} - {target_column} - Train - {attention_type} - {model_type}", plot=False)
+            return (dataset_name, target_column, model_name, train_metrics, test_metrics)
 
-    for file_path, dataset_name in file_paths:
-        X, y_dict, feature_columns, band_columns = load_data(file_path, target_columns)
-        X = preprocess_data(X)
+        results.extend(Parallel(n_jobs=-1)(delayed(train_and_evaluate)(model_type, attention_type) for model_type in ['CNN', 'ResNet18', 'VGG7', 'SATCN', 'LSTM', 'DenseNet', 'CNNWithSelfAttention', 'Transformer'] for attention_type in [None, 'SE', 'ECA', 'CBAM']))
+    return results
 
-        for target_column, y in y_dict.items():
-            print(f"Processing {target_column} from {dataset_name}")
-            # 修改这里，设置 test_size=63
-            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=63, random_state=42)
-            print(f"训练集样本数: {len(X_train)}, 测试集样本数: {len(X_val)}")
-            for model_type in ['CNN', 'ResNet18', 'VGG7', 'SATCN']:
-                for attention_type in [None, 'SE', 'ECA', 'CBAM']:
-                    print(f"Training {model_type} with attention type: {attention_type}")
-                    model = train_model(X_train, y_train, input_dim=X.shape[1], model_type=model_type, attention_type=attention_type)
-                    if attention_type is not None:
-                        title = f"{dataset_name} - {target_column} - {attention_type} - {model_type}"
-                        model_name = f"{attention_type}_{model_type}"
-                    else:
-                        title = f"{dataset_name} - {target_column} - {model_type}"
-                        model_name = model_type
-                    test_metrics = evaluate_model(
-                        model, X_val, y_val, feature_columns, target_column,
-                        model_type, attention_type, dataset_name,
-                        title=title, plot=True
-                    )
-                    train_metrics = evaluate_model(model, X_train, y_train, feature_columns, target_column, model_type, attention_type, dataset_name, title=f"{dataset_name} - {target_column} - Train - {attention_type} - {model_type}", plot=False)
-                    results.append((dataset_name, target_column, model_name, train_metrics, test_metrics))
-    
+def summarize_results(results):
     headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
     table = [[dataset_name, target_column, model_name, f"{train_metrics[0]:.4f}", f"{train_metrics[1]:.4f}",
-              f"{train_metrics[2]:.4f}", f"{test_metrics[0]:.4f}", f"{test_metrics[1]:.4f}", f"{test_metrics[2]:.4f}"]
+              f"{train_metrics[2]::.4f}", f"{test_metrics[0]:.4f}", f"{test_metrics[1]:.4f}", f"{test_metrics[2]:.4f}"]
              for dataset_name, target_column, model_name, train_metrics, test_metrics in results]
 
     print("\nResults Summary:")
@@ -588,6 +719,22 @@ def main():
     # 将结果导出为 xlsx 文件
     results_df = pd.DataFrame(table, columns=headers)
     results_df.to_excel('./output/results_summary.xlsx', index=False)
+
+def main():
+    file_paths = [
+        ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
+        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
+        ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
+        ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
+    ]
+    target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)","水溶性有机碳(mg/g)","全碳(g/kg)","有机质(g/kg)"]
+    all_results = []
+
+    for file_path, dataset_name in file_paths:
+        results = process_dataset(file_path, dataset_name, target_columns)
+        all_results.extend(results)
+    
+    summarize_results(all_results)
     
 if __name__ == "__main__":
     main()
