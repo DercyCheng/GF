@@ -1,4 +1,3 @@
-
 from torch import nn
 from torch.nn import TransformerEncoderLayer, TransformerEncoder
 
@@ -39,4 +38,4 @@ class SSLT(nn.Module):
             x = self.attention_block(x.transpose(1, 2)).transpose(1, 2)  # Apply selected attention
         x = x.mean(dim=1)  # Global average pooling
         x = self.fc(x)
-        return x
+        return x.squeeze()  # 确保输出形状正确
