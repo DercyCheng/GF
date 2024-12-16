@@ -1,178 +1,75 @@
-import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler, PowerTransformer
-from sklearn.model_selection import train_test_split, GridSearchCV, KFold
+import torch
+import pandas as pd
+from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from xgboost import XGBRegressor
 from sklearn.svm import SVR
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.metrics import r2_score, mean_squared_error
-from sklearn.impute import SimpleImputer
-from sklearn.decomposition import PCA
-from tabulate import tabulate
-import xgboost as xgb
-from sklearn.linear_model import Ridge, Lasso  # 添加导入
+from utils import load_data, preprocess_data, set_seed
 
+file_paths = [
+    ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
+    ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
+    ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
+    ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
+]
+target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)", "水溶性有机碳(mg/g)", "全碳(g/kg)", "有机质(g/kg)"]
+model_names = ["Random Forest", "Gradient Boosting", "XGBoost", "PLSR", "SVM"]
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'Microsoft YaHei', 'STFangsong']
-plt.rcParams['axes.unicode_minus'] = False
+results = []
 
-def load_data(file_path, target_columns):
-    try:
-        data = pd.read_excel(file_path)
-        print(f"Data loaded successfully from {file_path}!")
-    except Exception as e:
-        print(f"Failed to load data from {file_path}: {e}")
-        exit()
-
-    data.columns = data.columns.map(str)
-    band_columns = [col for col in data.columns if col.isdigit() and 400 <= int(col) <= 2400]
-
-    if not band_columns:
-        print("No band columns found! Please check the column names format.")
-        exit()
-
-    feature_columns = [col for col in data.columns if col not in target_columns]
-    data = data.dropna(subset=target_columns + band_columns)
-    X = data[feature_columns].select_dtypes(include=[np.number]).values
-    y_dict = {target_column: data[target_column].values for target_column in target_columns}
-
-    print(f"Number of features: {len(feature_columns)}, Number of samples: {X.shape[0]}")
-    return X, y_dict, feature_columns, band_columns
-
-def preprocess_data(X):
-    imputer = SimpleImputer(strategy='mean')
-    X = imputer.fit_transform(X)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    pt = PowerTransformer(method='yeo-johnson')
-    X_transformed = pt.fit_transform(X_scaled)
-    return X_transformed
-
-def perform_pca(X, n_components=10):
-    pca = PCA(n_components=n_components)
-    X_pca = pca.fit_transform(X)
-    print(f"PCA completed, retained {n_components} components")
-    return X_pca
-
-def evaluate_model(y_true, y_pred):
-    r2 = r2_score(y_true, y_pred)
-    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
-    rpd = np.std(y_true) / rmse
-    return r2, rmse, rpd
-
-def train_model(X, y, model_name):
-    if model_name == "Random Forest":
-        param_grid = {
-            'n_estimators': [100, 200, 300, 500],
-            'max_depth': [None, 10, 20, 30, 50],
-            'min_samples_split': [2, 5, 10],
-            'min_samples_leaf': [1, 2, 4],
-            'max_features': ['auto', 'sqrt', 'log2']
-        }
-        model = RandomForestRegressor(random_state=42)
-    elif model_name == "Gradient Boosting":
-        param_grid = {
-            'n_estimators': [100, 200, 300, 500],
-            'learning_rate': [0.01, 0.1, 0.2, 0.3],
-            'max_depth': [3, 5, 7, 9],
-            'subsample': [0.7, 0.8, 0.9, 1.0],
-            'max_features': ['auto', 'sqrt', 'log2']
-        }
-        model = GradientBoostingRegressor(random_state=42)
-    elif model_name == "XGBoost":
-        param_grid = {
-            'n_estimators': [100, 200, 300, 500],
-            'learning_rate': [0.01, 0.1, 0.2, 0.3],
-            'max_depth': [3, 5, 7, 9],
-            'subsample': [0.7, 0.8, 0.9, 1.0],
-            'colsample_bytree': [0.7, 0.8, 0.9, 1.0]
-        }
-        model = xgb.XGBRegressor(random_state=42, tree_method='gpu_hist', gpu_id=0)
-    elif model_name == "PLSR":
-        param_grid = {'n_components': [2, 5, 10, 15, 20, 25, 30]}
-        model = PLSRegression()
-    elif model_name == "SVM":
-        param_grid = {
-            'C': [0.1, 1, 10, 100, 1000],
-            'epsilon': [0.01, 0.1, 0.2, 0.3],
-            'kernel': ['linear', 'rbf', 'poly', 'sigmoid'],
-            'gamma': ['scale', 'auto']
-        }
-        model = SVR()
-    elif model_name == "Ridge":
-        param_grid = {'alpha': [0.1, 1, 10, 100, 1000]}
-        model = Ridge()
-    elif model_name == "Lasso":
-        param_grid = {'alpha': [0.1, 1, 10, 100, 1000]}
-        model = Lasso()
-
-    grid_search = GridSearchCV(model, param_grid, cv=10, scoring='r2', n_jobs=-1)
-    grid_search.fit(X, y)
-    best_model = grid_search.best_estimator_
-
-    kf = KFold(n_splits=10, shuffle=True, random_state=42)
-    r2_scores_train, rmse_scores_train, rpd_scores_train = [], [], []
-    r2_scores_test, rmse_scores_test, rpd_scores_test = [], [], []
-
-    for train_index, test_index in kf.split(X):
-        X_train, X_test = X[train_index], X[test_index]
-        y_train, y_test = y[train_index], y[test_index]
-
-        best_model.fit(X_train, y_train)
-        y_pred_train = best_model.predict(X_train)
-        y_pred_test = best_model.predict(X_test)
-
-        r2_train, rmse_train, rpd_train = evaluate_model(y_train, y_pred_train)
-        r2_test, rmse_test, rpd_test = evaluate_model(y_test, y_pred_test)
-
-        r2_scores_train.append(r2_train)
-        rmse_scores_train.append(rmse_train)
-        rpd_scores_train.append(rpd_train)
-        r2_scores_test.append(r2_test)
-        rmse_scores_test.append(rmse_test)
-        rpd_scores_test.append(rpd_test)
-
-    print(f"Cross-validated results for {model_name}:")
-    print(f"Train - Mean R²: {np.mean(r2_scores_train)}, Mean RMSE: {np.mean(rmse_scores_train)}, Mean RPD: {np.mean(rpd_scores_train)}")
-    print(f"Test - Mean R²: {np.mean(r2_scores_test)}, Mean RMSE: {np.mean(rmse_scores_test)}, Mean RPD: {np.mean(rpd_scores_test)}")
-
-    best_model.fit(X, y)
-    return best_model, (np.mean(r2_scores_train), np.mean(rmse_scores_train), np.mean(rpd_scores_train)), (np.mean(r2_scores_test), np.mean(rmse_scores_test), np.mean(rpd_scores_test))
-
-def main():
-    file_paths = [
-        ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
-        ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
-    ]
-    target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)","水溶性有机碳(mg/g)","全碳(g/kg)","有机质(g/kg)"]
-    model_names = ["Random Forest", "Gradient Boosting", "XGBoost", "PLSR", "SVM", "Ridge", "Lasso"]
-    results = []
-
-    for file_path, dataset_name in file_paths:
-        X, y_dict, feature_columns, band_columns = load_data(file_path, target_columns)
-        X = preprocess_data(X)
-
-        for target_column, y in y_dict.items():
-            for model_name in model_names:
-                print(f"Processing {target_column} from {dataset_name} using {model_name}")
-                X_pca = perform_pca(X)
-                X_train, X_test, y_train, y_test = train_test_split(X_pca, y, test_size=63/(215+63), random_state=42)
-                model, train_metrics, test_metrics = train_model(X_train, y_train, model_name)
-                results.append((dataset_name, target_column, model_name, train_metrics, test_metrics))
-
-    headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
-    table = [[dataset_name, target_column, model_name, f"{train_metrics[0]:.4f}", f"{train_metrics[1]:.4f}", f"{train_metrics[2]:.4f}", f"{test_metrics[0]:.4f}", f"{test_metrics[1]:.4f}", f"{test_metrics[2]:.4f}"] for dataset_name, target_column, model_name, train_metrics, test_metrics in results]
-
-    print("\nResults Summary:")
-    print(tabulate(table, headers=headers, tablefmt="grid"))
-
-    # 将结果导出为 xlsx 文件
-    results_df = pd.DataFrame(table, columns=headers)
-    results_df.to_excel('results_summary.xlsx', index=False)
+def train_and_evaluate(model, model_name, X_train, X_test, y_train, y_test, target_column):
+    model.fit(X_train, y_train)
+    y_train_pred = model.predict(X_train)
+    y_test_pred = model.predict(X_test)
     
-if __name__ == "__main__":
-    main()
+    train_r2 = round(r2_score(y_train, y_train_pred), 4)
+    train_rmse = round(np.sqrt(mean_squared_error(y_train, y_train_pred)), 4)
+    train_rpd = round(np.std(y_train) / train_rmse, 4)
+    
+    test_r2 = round(r2_score(y_test, y_test_pred), 4)
+    test_rmse = round(np.sqrt(mean_squared_error(y_test, y_test_pred)), 4)
+    test_rpd = round(np.std(y_test) / test_rmse, 4)
+    
+    results.append({
+        "Dataset": dataset_name,
+        "Target": target_column,
+        "Model": model_name,
+        "Train R²": train_r2,
+        "Train RMSE": train_rmse,
+        "Train RPD": train_rpd,
+        "Test R²": test_r2,
+        "Test RMSE": test_rmse,
+        "Test RPD": test_rpd
+    })
+    # plot_results(y_test, y_pred, f"{model_name} - {target_column}", model_name, target_column)
+    # shap_analysis(model, X_test, feature_names, target_column, model_name, None, dataset_name)
+    # lime_analysis(model, X_test, y_test, feature_names, target_column, model_name, None, dataset_name)
+
+# 设置随机种子
+set_seed()
+
+for file_path, dataset_name in file_paths:
+    X, y_dict, feature_names, band_columns = load_data(file_path, target_columns)
+    X = preprocess_data(X)
+    
+    for target_column in target_columns:
+        y = y_dict[target_column]
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        models = {
+            "Random Forest": RandomForestRegressor(),
+            "Gradient Boosting": GradientBoostingRegressor(),
+            "XGBoost": XGBRegressor(),
+            "PLSR": PLSRegression(),
+            "SVM": SVR()
+        }
+        
+        for model_name, model in models.items():
+            train_and_evaluate(model, model_name, X_train, X_test, y_train, y_test, target_column)
+
+# 保存结果到 result_summary.xlsx
+results_df = pd.DataFrame(results)
+results_df.to_excel("result_summary.xlsx", index=False, header=["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"])
