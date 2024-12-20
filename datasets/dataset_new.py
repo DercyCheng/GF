@@ -7,10 +7,10 @@ from sklearn.decomposition import PCA
 data = pd.read_excel('data.xlsx')
 
 # 定义列名
-soil_nutrients = ['PH', '有机质(g/kg)', '全氮(g/kg)', '全磷(g/kg)', '全钾(g/kg)', '速效N(mg/kg)', '速效p(mg/kg)', '速效k(mg/kg)', 'B(mg/kg)', 'Cu(mg/kg)', 'Zn(mg/kg)', 'Fe(mg/kg)', 'Ca(mg/kg)', 'Mg(mg/kg)', '全碳(g/kg)']
+soil_nutrients = ['PH', 'OM', '全氮(g/kg)', '全磷(g/kg)', '全钾(g/kg)', '速效N(mg/kg)', '速效p(mg/kg)', '速效k(mg/kg)', 'B(mg/kg)', 'Cu(mg/kg)', 'Zn(mg/kg)', 'Fe(mg/kg)', 'Ca(mg/kg)', 'Mg(mg/kg)', 'TC']
 spectral_bands = [str(i) for i in range(400, 2400, 10)]
 environment_info = ['海拔测量', 'Longitude', 'latitude', '坡度', '坡向', '海拔', '大于10度积温', '年均降雨', '年均温度', '代数', '林龄']
-soc_columns = ['易氧化有机碳(mg/g)', '有机碳含量(g/kg)', '水溶性有机碳(mg/g)']
+soc_columns = ['EOC', 'SOC', 'WOC']
 # 将光谱波段列名转换为字符串类型
 data.columns = data.columns.map(str)
 

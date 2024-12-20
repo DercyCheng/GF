@@ -1,10 +1,11 @@
 from torch import nn
+import torch
 from torch.nn import TransformerEncoderLayer, TransformerEncoder
 
-from models.ECABlock import ECABlock
-from models.CBAMBlock import CBAMBlock
-from models.SEBlock import SEBlock
-from models.SABlock import SABlock
+from .ECABlock import ECABlock
+from .CBAMBlock import CBAMBlock
+from .SEBlock import SEBlock
+from .SABlock import SABlock
 
 class SSLT(nn.Module):
     def __init__(self, input_dim, num_heads=4, num_layers=2, dropout=0.1, attention_type=None):
@@ -13,22 +14,20 @@ class SSLT(nn.Module):
         self.embedding = nn.Linear(input_dim, 512)
         encoder_layers = TransformerEncoderLayer(d_model=512, nhead=num_heads, dropout=dropout, batch_first=True)
         self.transformer_encoder = TransformerEncoder(encoder_layers, num_layers=num_layers)
-        if attention_type == 'ECA':
-            self.attention_block = ECABlock(512)
-        elif attention_type == 'CBAM':
-            self.attention_block = CBAMBlock(512)
-        elif attention_type == 'SE':
-            self.attention_block = SEBlock(512)
-        elif attention_type == 'SA':
-            self.attention_block = SABlock(512)
-        else:
-            self.attention_block = None
+        attention_blocks = {
+            'ECA': ECABlock(512),
+            'CBAM': CBAMBlock(512),
+            'SE': SEBlock(512),
+            'SA': SABlock(512)
+        }
+        self.attention_block = attention_blocks.get(attention_type, None)
         self.fc = nn.Sequential(
             nn.Linear(512, 256),
             nn.ReLU(inplace=False),
             nn.Dropout(0.5),
             nn.Linear(256, 1)
         )
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Default device
 
     def forward(self, x):
         x = self.embedding(x)  # Shape: [batch_size, input_dim] -> [batch_size, 512]

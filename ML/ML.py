@@ -15,7 +15,7 @@ file_paths = [
     ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
     ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
 ]
-target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)", "水溶性有机碳(mg/g)", "全碳(g/kg)", "有机质(g/kg)"]
+target_columns = ["EOC", "SOC", "WOC", "TC", "OM"]
 model_names = ["Random Forest", "Gradient Boosting", "XGBoost", "PLSR", "SVM"]
 
 results = []

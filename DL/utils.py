@@ -30,7 +30,7 @@ def plot_results(y_true, y_pred, title, model_type, target_column):
 
     # 拟合线
     m, b = np.polyfit(y_true, y_pred, 1)
-    plt.plot(y_true, m * y_true + b, 'b-', label=f'Fit Line: y={m:.2f}x+{b:.2f}')
+    plt.plot(y_true, m * y_true + b, 'b-', label=f'Fit Line: y={float(m):.2f}x+{float(b):.2f}')
 
     # 计算 R², RMSE, RPD
     r2 = r2_score(y_true, y_pred)
@@ -104,12 +104,28 @@ def set_seed(seed=42):
         torch.cuda.manual_seed_all(seed)
 
 def augment_data(X, y):
+    # 通过多种增广操作，数据最终扩容为原来的5倍
     # Example data augmentation: adding Gaussian noise
     noise = np.random.normal(0, 0.01, X.shape)
     X_augmented = X + noise
-    return np.concatenate([X, X_augmented]), np.concatenate([y, y])
+
+    # Additional augmentation: scaling
+    scale = np.random.uniform(0.9, 1.1, X.shape)
+    X_scaled = X * scale
+
+    # Additional augmentation: flipping
+    X_flipped = np.flip(X, axis=1)
+
+    # Additional augmentation: shifting
+    shift = np.roll(X, shift=1, axis=1)
+
+    X_augmented = np.concatenate([X, X_augmented, X_scaled, X_flipped, shift])
+    y_augmented = np.concatenate([y, y, y, y, y])
+
+    return X_augmented, y_augmented
 
 def load_data(file_path, target_columns):
+    # 数据集文件格式为 xlsx
     try:
         data = pd.read_excel(file_path)
         print(f"Data loaded successfully from {file_path}!")
@@ -118,19 +134,14 @@ def load_data(file_path, target_columns):
         exit()
 
     data.columns = data.columns.map(str)
-    band_columns = [col for col in data.columns if col.isdigit() and 400 <= int(col) <= 2400]
-
-    if not band_columns:
-        print("No band columns found! Please check the column names format.")
-        exit()
-
-    feature_columns = [col for col in data.columns if col not in target_columns]
-    data = data.dropna(subset=target_columns + band_columns)
-    X = data[feature_columns].select_dtypes(include=[np.number]).values
+    data = data.dropna(subset=target_columns)
     y_dict = {target_column: data[target_column].values for target_column in target_columns}
+    data = data.drop(columns=target_columns)
+    feature_columns = data.columns.tolist()
+    x = data.select_dtypes(include=[np.number]).values
 
-    print(f"Number of features: {len(feature_columns)}, Number of samples: {X.shape[0]}")
-    return X, y_dict, feature_columns, band_columns
+    print(f"Number of features: {len(feature_columns)}, Number of samples: {x.shape[0]}")
+    return x, y_dict, feature_columns
 
 def preprocess_data(X):
     imputer = SimpleImputer(strategy='mean')

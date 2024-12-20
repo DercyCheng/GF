@@ -40,6 +40,13 @@ environment_info = {
     '代数': 'Generation',
     '林龄': 'ForestAge'
 }
+target_columns = {
+    '有机质(g/kg)': 'OM',
+    '全碳(g/kg)': 'TC',
+    '易氧化有机碳(mg/g)': 'EOC',
+    '有机碳含量(g/kg)': 'SOC',
+    '水溶性有机碳(mg/g)': 'WOC'
+}
 
 # 将光谱波段列名转换为字符串类型并添加单位
 data.columns = data.columns.map(lambda x: f'{x}nm' if isinstance(x, int) else x)
@@ -67,8 +74,18 @@ sgd_filtered_env = savgol_filter(data[spectral_bands], window_length=5, polyorde
 sgd_derivative_env = savgol_filter(sgd_filtered_env, window_length=5, polyorder=2, deriv=1, axis=0)
 dataset4 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(sgd_derivative_env, columns=spectral_bands), data[list(environment_info.values())]], axis=1)
 
+# 数据集5：经过SGD+DR处理的光谱波段+target_columns
+sgd_filtered_target = savgol_filter(data[spectral_bands], window_length=5, polyorder=2, deriv=0, axis=0)
+sgd_derivative_target = savgol_filter(sgd_filtered_target, window_length=5, polyorder=2, deriv=1, axis=0)
+dataset5 = pd.concat([
+    pd.DataFrame(sgd_derivative_target, columns=spectral_bands),
+    data[list(target_columns.values())]  # 确保包含 'OM' 和 'WOC'
+], axis=1)
+
+
 # 保存数据集到不同的Excel文件
 dataset1.to_excel('data_soil_nutrients_spectral_bands.xlsx', index=False)
 dataset2.to_excel('data_soil_nutrients_spectral_bands_environment.xlsx', index=False)
 dataset3.to_excel('data_soil_nutrients_spectral_bands_sgd_dr.xlsx', index=False)
 dataset4.to_excel('data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx', index=False)
+dataset5.to_excel('data_spectral_bands_sgd_dr.xlsx', index=False)

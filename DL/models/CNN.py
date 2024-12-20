@@ -4,9 +4,9 @@ from .ECABlock import ECABlock
 from .CBAMBlock import CBAMBlock
 from .SABlock import SABlock
 
-class CNN(nn.Module):
+class DCNN(nn.Module):
     def __init__(self, input_dim, attention_type=None):
-        super(CNN, self).__init__()
+        super(DCNN, self).__init__()
         self.conv1 = nn.Conv1d(1, 64, kernel_size=5, padding=2)
         self.bn1 = nn.BatchNorm1d(64)
         self.conv2 = nn.Conv1d(64, 128, kernel_size=5, padding=2)
