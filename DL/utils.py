@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shap
+from sklearn.decomposition import PCA
 import torch
 import lime
 import lime.lime_tabular
@@ -148,3 +149,8 @@ def preprocess_data(X):
     X = imputer.fit_transform(X)
     scaler = StandardScaler()
     return scaler.fit_transform(X)
+
+def reduce_dimensionality(X, n_components=50):
+    pca = PCA(n_components=n_components)
+    X_reduced = pca.fit_transform(X)
+    return X_reduced
