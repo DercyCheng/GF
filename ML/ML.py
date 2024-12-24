@@ -60,11 +60,11 @@ for file_path, dataset_name in file_paths:
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
         models = {
-            "Random Forest": RandomForestRegressor(),
-            "Gradient Boosting": GradientBoostingRegressor(),
-            "XGBoost": XGBRegressor(),
-            "PLSR": PLSRegression(),
-            "SVM": SVR()
+            "Random Forest": RandomForestRegressor(n_estimators=100, max_depth=5, random_state=42),
+            "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42),
+            "XGBoost": XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=3, random_state=42, verbosity=0),
+            "PLSR": PLSRegression(n_components=5),
+            "SVM": SVR(C=1.0, kernel='linear', epsilon=0.1)
         }
         
         for model_name, model in models.items():
