@@ -8,8 +8,7 @@ from sklearn.metrics import r2_score, mean_squared_error
 from sklearn.model_selection import train_test_split, KFold
 from tabulate import tabulate
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.decomposition import PCA
-import torch.nn.functional as F  # 添加导入
+import os  # 添加导入
 
 # Import models
 from models.DCNN import DCNN
@@ -35,7 +34,6 @@ def initialize_model(model_type, input_dim, attention_type=None):
         'ResNet18': ResNet18,
         'VGG7': VGG7,
         'DCNN': DCNN,
-        # 'SSLT': SSLT,  # 移除模型类型
         'LSTM': LSTM,
         'TCN': TCN,
         'CNN_LSTM': CNN_LSTM
@@ -72,11 +70,40 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, model_typ
         train_loss += loss.item() * X_batch.size(0)
     return train_loss / len(train_loader.dataset)
 
-def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size, learning_rate, n_splits, seed, patience):
+def moving_average(data, window_size=5):
+    return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
+
+def plot_loss_curves(train_losses, val_losses, n_splits, target_name, model_name):
+    # 取所有 fold 的最短训练长度，避免早停带来的长度不一致
+    min_len = min(len(tl) for tl in train_losses)
+    trimmed_train_losses = [tl[:min_len] for tl in train_losses]
+    trimmed_val_losses = [vl[:min_len] for vl in val_losses]
+    
+    # 计算平均训练损失和平均验证损失
+    avg_train_loss = np.mean(trimmed_train_losses, axis=0)
+    avg_val_loss = np.mean(trimmed_val_losses, axis=0)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(moving_average(avg_train_loss), label='Train Loss', alpha=0.7)
+    plt.plot(moving_average(avg_val_loss), label='Validation Loss', alpha=0.7)
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title(f'Training and Validation Loss Curves - {target_name} - {model_name}')
+    output_dir = os.path.join('output', target_name)
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(os.path.join(output_dir, 'loss_curve.png'))
+    plt.close()
+
+def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size, learning_rate, n_splits, seed, patience, target_name, model_name):
     set_seed(seed)  # 使用传入的随机种子
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
     best_model = None
     best_val_loss = float('inf')
+
+    # 初始化损失记录为每个fold的列表
+    train_losses = []
+    val_losses = []
 
     for fold, (train_index, val_index) in enumerate(kf.split(X)):
         print(f"Fold {fold + 1}/{n_splits}")
@@ -94,10 +121,14 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)  # 移除 verbose=True
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-3)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience)
 
         patience_counter = 0
+
+        # 初始化当前fold的损失记录
+        fold_train_losses = []
+        fold_val_losses = []
 
         for epoch in range(epochs):
             train_loss = train_one_epoch(model, train_loader, optimizer, criterion, device, model_type)
@@ -113,8 +144,10 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
                     loss = criterion(outputs, y_batch)
                     val_loss += loss.item() * X_batch.size(0)
 
-            val_loss /= len(val_loader.dataset)
+            val_loss /= len(val_loader)
             scheduler.step(val_loss)  # 更新调度器
+            fold_train_losses.append(train_loss)
+            fold_val_losses.append(val_loss)
 
             print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
 
@@ -128,10 +161,17 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
                     print("Early stopping")
                     break
 
+        # 保存当前fold的损失
+        train_losses.append(fold_train_losses)
+        val_losses.append(fold_val_losses)
+
+    # 调用新函数进行绘图
+    plot_loss_curves(train_losses, val_losses, n_splits, target_name, model_name)
+
     return best_model
 
 def evaluate_model(model, X, y, feature_columns, target_column, model_type, attention_type, dataset_name,
-                   title="模型评估", plot=False):
+                   title="模型评估", plot=False, overfitting=False):  # 添加参数 overfitting
     model.eval()
     with torch.no_grad():
         X_tensor = torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device)
@@ -143,14 +183,16 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
     rmse = np.sqrt(mean_squared_error(y, y_pred))
     rpd = np.std(y) / rmse
 
-    if plot and 0.85 <= r2 < 0.99:#
+    if plot and 0.85 <= r2 < 0.99 and not overfitting:
         plot_results(y, y_pred, title, model_type, sanitize_filename(target_column))
         shap_analysis(model, X, feature_columns, sanitize_filename(target_column), model_type, attention_type, dataset_name)
         lime_analysis(model, X, y, feature_columns, sanitize_filename(target_column), model_type, attention_type, dataset_name)
 
     return r2, rmse, rpd
 
-def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batch_size, learning_rate, n_splits, seed, patience, feature_columns, target_column, dataset_name):
+def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batch_size,
+                       learning_rate, n_splits, seed, patience, feature_columns,
+                       target_column, dataset_name):
     model = train_model(
         X, y, input_dim=input_dim,
         model_type=model_type,
@@ -160,20 +202,31 @@ def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batc
         learning_rate=learning_rate,
         n_splits=n_splits,
         seed=seed,
-        patience=patience  # 传入 patience
+        patience=patience,  # 传入 patience
+        target_name=target_column,  # 添加参数
+        model_name=model_type         # 添加参数
     )
     X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=215, random_state=seed)
+    # 先分别计算训练集和测试集指标，并禁止绘图
+    train_metrics = evaluate_model(
+        model, X_train, y_train, feature_columns, target_column,
+        model_type, attention_type, dataset_name,
+        plot=False
+    )
     test_metrics = evaluate_model(
         model, X_val, y_val, feature_columns, target_column,
         model_type, attention_type, dataset_name,
-        title=f"{dataset_name} - {target_column} - {attention_type} - {model_type}" if attention_type else f"{dataset_name} - {target_column} - {model_type}",
-        plot=True
-    )
-    train_metrics = evaluate_model(
-        model, X_train, y_train, feature_columns, target_column, model_type,
-        attention_type, dataset_name,
-        title=f"{dataset_name} - {target_column} - Train - {attention_type} - {model_type}" if attention_type else f"{dataset_name} - {target_column} - Train - {model_type}",
         plot=False
+    )
+    # 判断是否过拟合
+    overfitting_bool = (train_metrics[0] - test_metrics[0] > 0.1)
+    # 如果不过拟合，则允许在测试集上绘图
+    evaluate_model(
+        model, X_val, y_val, feature_columns, target_column,
+        model_type, attention_type, dataset_name,
+        title=f"{dataset_name} - {target_column} - {attention_type} - {model_type}" if attention_type else f"{dataset_name} - {target_column} - {model_type}",
+        plot=True,
+        overfitting=overfitting_bool
     )
     return train_metrics, test_metrics
 
@@ -214,13 +267,13 @@ def main():
         ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
     ]
     target_columns = ["EOC", "SOC", "WOC", "TC", "OM"]
-    model_types = ['TCN','ResNet18','VGG7','DCNN','LSTM','CNN_LSTM']  # 移除 SSLT
+    model_types = ['DCNN']  #'TCN','ResNet18','VGG7',,'LSTM','CNN_LSTM' 
     attention_types = [ None, 'SE','ECA', 'CBAM', 'SA']  # 移除 SSLT
     results = []
 
     SEED = 42
     EPOCHS = 300
-    BATCH_SIZE = 32
+    BATCH_SIZE = 64  # 将 batch size 从32增加到64
     LEARNING_RATE = 0.0001
     N_SPLITS = 5
     PATIENCE = 20  # 定义 patience
@@ -232,12 +285,27 @@ def main():
             model_types, attention_types, PATIENCE, results  # 传入 patience
         )
 
-    headers = ["Dataset", "Target", "Model", "Attention", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
     table = [
-        [dataset_name, target_column, model_type, attention_type, 
-         f"{train_metrics[0]:.4f}", f"{train_metrics[1]:.4f}", f"{train_metrics[2]:.4f}", 
-         f"{test_metrics[0]:.4f}", f"{test_metrics[1]:.4f}", f"{test_metrics[2]:.4f}"]
+        [
+            dataset_name, 
+            target_column, 
+            model_type, 
+            attention_type, 
+            f"{train_metrics[0]:.4f}", 
+            f"{train_metrics[1]:.4f}", 
+            f"{train_metrics[2]:.4f}", 
+            f"{test_metrics[0]:.4f}", 
+            f"{test_metrics[1]:.4f}", 
+            f"{test_metrics[2]:.4f}",
+            "Yes" if (train_metrics[0] - test_metrics[0] > 0.1) else "No"  # Determine overfitting
+        ]
         for dataset_name, target_column, model_type, attention_type, train_metrics, test_metrics in results
+    ]
+
+    headers = [
+        "Dataset", "Target", "Model", "Attention", 
+        "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD",
+        "Overfitting"  # New column header
     ]
 
     print("\nResults Summary:")
