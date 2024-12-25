@@ -96,7 +96,7 @@ def lime_analysis(model, X, y, feature_names, target_column, model_type, attenti
     # plt.show()
     plt.close()
 
-def set_seed(seed=42):
+def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

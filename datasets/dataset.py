@@ -26,7 +26,7 @@ soil_nutrients = {
     '有机碳含量(g/kg)': 'SOC',
     '水溶性有机碳(mg/g)': 'WOC'
 }
-spectral_bands = [f'{i}nm' for i in range(400, 2400, 10)]
+spectral_bands = [f'{i}' for i in range(350, 2500)]
 environment_info = {
     '海拔测量': 'Elevation',
     'Longitude': 'Longitude',
@@ -49,7 +49,7 @@ target_columns = {
 }
 
 # 将光谱波段列名转换为字符串类型并添加单位
-data.columns = data.columns.map(lambda x: f'{x}nm' if isinstance(x, int) else x)
+data.columns = data.columns.map(lambda x: f'{x}' if isinstance(x, int) else x)
 
 # 使用别名替换列名
 data.rename(columns={**soil_nutrients, **environment_info}, inplace=True)
