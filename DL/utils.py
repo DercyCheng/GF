@@ -49,6 +49,24 @@ def plot_results(y_true, y_pred, title, model_type, target_column):
     plt.savefig(save_path)  # 保存图像
     plt.close()
 
+def plot_loss_curve(all_train_losses, all_val_losses, target_column, model_type, dataset_name, attention_type=None):
+    save_title = sanitize_filename(f"LOSS_{dataset_name}_{target_column}_{attention_type}_{model_type}") if attention_type else sanitize_filename(f"LOSS_{dataset_name}_{target_column}_{model_type}")
+    save_path = f"output/{sanitize_filename(target_column)}/loss/{save_title}.png"  # 保存路径�� shap 一致
+    ensure_dir(os.path.dirname(save_path))
+    plt.figure(figsize=(12, 8))
+    
+    for fold, (train_losses, val_losses) in enumerate(zip(all_train_losses, all_val_losses), 1):
+        plt.plot(train_losses, label=f'Fold {fold} Training Loss')
+        plt.plot(val_losses, label=f'Fold {fold} Validation Loss')
+    
+    plt.title(f'Loss Curves for {model_type} on {target_column}')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_path)
+    plt.close()
+
 def shap_analysis(model, X, feature_names, target_column, model_type, attention_type, dataset_name):
     save_title = sanitize_filename(f"SHAP_{dataset_name}_{target_column}_{attention_type}_{model_type}") if attention_type else sanitize_filename(f"SHAP_{dataset_name}_{target_column}_{model_type}")
     save_path = f"output/{sanitize_filename(target_column)}/shap/{save_title}.png"
@@ -148,3 +166,11 @@ def preprocess_data(X):
     X = imputer.fit_transform(X)
     scaler = StandardScaler()
     return scaler.fit_transform(X)
+
+def compute_regularization(model, l1_coeff=0.0, l2_coeff=0.0):
+    l1_reg = 0.0
+    l2_reg = 0.0
+    for param in model.parameters():
+        l1_reg += torch.sum(torch.abs(param))
+        l2_reg += torch.sum(param ** 2)
+    return l1_coeff * l1_reg + l2_coeff * l2_reg
