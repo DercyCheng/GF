@@ -161,7 +161,7 @@ def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batc
         seed=seed,
         patience=patience  # 传入 patience
     )
-    X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=215, random_state=seed)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=seed)
     test_metrics = evaluate_model(
         model, X_val, y_val, feature_columns, target_column,
         model_type, attention_type, dataset_name,
@@ -214,7 +214,7 @@ def main():
         ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
     ]
     target_columns = ["EOC", "SOC", "WOC", "TC", "OM"]
-    model_types = ['TCN', 'SSLT','ResNet18', 'VGG7','DCNN', 'LSTM', 'CNN_LSTM']#
+    model_types = ['ResNet18', 'VGG7','DCNN']#
     attention_types = [ None, 'SE','ECA', 'CBAM', 'SA']#
     results = []
 
