@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
@@ -10,6 +9,7 @@ from sklearn.metrics import r2_score, mean_squared_error
 from utils import load_data, preprocess_data, set_seed
 
 file_paths = [
+    ("../datasets/data_spectral_bands_sgd_dr.xlsx", "SBSD"),
     ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
     ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
     ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),

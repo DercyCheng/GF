@@ -9,7 +9,7 @@ from sklearn.model_selection import train_test_split, KFold
 from tabulate import tabulate
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.decomposition import PCA
-import torch.nn.functional as F  # 添加导入
+
 
 # Import models
 from models.DCNN import DCNN
@@ -22,7 +22,7 @@ from models.CNN_LSTM import CNN_LSTM
 
 # Import utility functions
 from utils import plot_results, shap_analysis, lime_analysis, set_seed, augment_data, load_data, preprocess_data, \
-    sanitize_filename, reduce_dimensionality
+    sanitize_filename
 
 # 设置中文字体并添加备用字体
 plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'Microsoft YaHei', 'STFangsong', 'Arial']
@@ -35,7 +35,6 @@ def initialize_model(model_type, input_dim, attention_type=None):
         'ResNet18': ResNet18,
         'VGG7': VGG7,
         'DCNN': DCNN,
-        # 'SSLT': SSLT,  # 移除模型类型
         'LSTM': LSTM,
         'TCN': TCN,
         'CNN_LSTM': CNN_LSTM
@@ -113,10 +112,14 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
                     loss = criterion(outputs, y_batch)
                     val_loss += loss.item() * X_batch.size(0)
 
-            val_loss /= len(val_loader.dataset)
+            val_loss /= len(val_loader)
             scheduler.step(val_loss)  # 更新调度器
 
-            print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+            # Calculate R² for train and validation sets
+            train_r2 = r2_score(y_train, model(torch.tensor(X_train, dtype=torch.float32).unsqueeze(1).to(device)).squeeze().cpu().detach().numpy())
+            val_r2 = r2_score(y_val, model(torch.tensor(X_val, dtype=torch.float32).unsqueeze(1).to(device)).squeeze().cpu().detach().numpy())
+
+            print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -180,7 +183,8 @@ def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batc
 def process_dataset(file_path, dataset_name, target_columns, EPOCHS, BATCH_SIZE, LEARNING_RATE, N_SPLITS, SEED, model_types, attention_types, patience, results):
     X, y_dict, feature_columns = load_data(file_path, target_columns)
     X = preprocess_data(X)
-    X = reduce_dimensionality(X, n_components=100)
+    pca = PCA(n_components=100)
+    X = pca.fit_transform(X)
     
     for target_column, y in y_dict.items():
         print(f"Processing {target_column} from {dataset_name}")

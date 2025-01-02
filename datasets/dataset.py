@@ -74,14 +74,13 @@ sgd_filtered_env = savgol_filter(data[spectral_bands], window_length=5, polyorde
 sgd_derivative_env = savgol_filter(sgd_filtered_env, window_length=5, polyorder=2, deriv=1, axis=0)
 dataset4 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(sgd_derivative_env, columns=spectral_bands), data[list(environment_info.values())]], axis=1)
 
-# 数据集5：经过SGD+DR处理的光谱波段+target_columns
+# 数据集5：target_columns + 经过SGD+DR处理的光谱波段
 sgd_filtered_target = savgol_filter(data[spectral_bands], window_length=5, polyorder=2, deriv=0, axis=0)
 sgd_derivative_target = savgol_filter(sgd_filtered_target, window_length=5, polyorder=2, deriv=1, axis=0)
 dataset5 = pd.concat([
-    pd.DataFrame(sgd_derivative_target, columns=spectral_bands),
-    data[list(target_columns.values())]  # 确保包含 'OM' 和 'WOC'
+    data[list(target_columns.values())],  # 确保包含 'OM' 和 'WOC'
+    pd.DataFrame(sgd_derivative_target, columns=spectral_bands)
 ], axis=1)
-
 
 # 保存数据集到不同的Excel文件
 dataset1.to_excel('data_soil_nutrients_spectral_bands.xlsx', index=False)
