@@ -2,8 +2,6 @@ import pandas as pd
 import numpy as np
 from scipy.signal import savgol_filter
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.feature_selection import VarianceThreshold
 
 # 读取Excel文件
 data = pd.read_excel('data.xlsx')
@@ -61,19 +59,6 @@ data.rename(columns={**soil_nutrients, **environment_info}, inplace=True)
 data[spectral_bands] = data[spectral_bands].fillna(data[spectral_bands].mean())
 # Apply SNV normalization
 data[spectral_bands] = data[spectral_bands].apply(lambda x: (x - x.mean()) / x.std(), axis=1)
-
-# Outlier removal using Z-score
-from scipy import stats
-data = data[(np.abs(stats.zscore(data[list(soil_nutrients.values()) + spectral_bands])) < 3).all(axis=1)]
-
-# Apply Min-Max scaling
-scaler = MinMaxScaler()
-data[spectral_bands] = scaler.fit_transform(data[spectral_bands])
-
-# Feature selection: remove low-variance features
-selector = VarianceThreshold(threshold=0.01)
-data = data[list(soil_nutrients.values()) + spectral_bands + list(environment_info.values())]
-data = pd.DataFrame(selector.fit_transform(data), columns=selector.get_feature_names_out())
 
 # Apply PCA for dimensionality reduction
 pca = PCA(n_components=10)
