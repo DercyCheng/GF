@@ -2,8 +2,9 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.optim as optim
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold  # Add KFold
 from sklearn.metrics import r2_score, mean_squared_error
+from torch.utils.data import DataLoader, TensorDataset  # Add DataLoader and TensorDataset
 from utils import load_data, preprocess_data, set_seed, ensure_dir, sanitize_filename
 import torch.nn as nn
 from utils import plot_results, shap_analysis, lime_analysis  # Add these imports
@@ -110,8 +111,13 @@ class DCNN(nn.Module):
             attention_blocks[attention_type](256) if attention_type else None,
             attention_blocks[attention_type](512) if attention_type else None
         ])
+        # Add dilated convolutions for multi-scale feature fusion
+        self.dilated_conv1 = nn.Conv1d(512, 64, kernel_size=3, padding=2, dilation=2)
+        self.dilated_conv2 = nn.Conv1d(512, 64, kernel_size=3, padding=4, dilation=4)
+        self.dilated_conv3 = nn.Conv1d(512, 64, kernel_size=3, padding=6, dilation=6)  # New dilated convolution
+        self.conv_fusion = nn.Conv1d(704, 512, kernel_size=1)  # Adjust channels back to 512 after concatenation
         self.fc = nn.Sequential(
-            nn.Linear(512, 256),
+            nn.Linear(512, 256),  # Restore input dimension to 512
             nn.ReLU(inplace=True),  # Change activation to ReLU
             nn.Dropout(0.5),
             nn.Linear(256, 128),
@@ -128,6 +134,12 @@ class DCNN(nn.Module):
             if self.attentions[i]:
                 x = self.attentions[i](x)
             x = self.pool(x)
+        # Multi-scale feature fusion
+        scale1 = self.dilated_conv1(x)
+        scale2 = self.dilated_conv2(x)
+        scale3 = self.dilated_conv3(x)  # Apply new dilated convolution
+        x = torch.cat([x, scale1, scale2, scale3], dim=1)  # Include new scale
+        x = self.conv_fusion(x)
         x = self.adaptive_pool(x)
         x = x.view(x.size(0), -1)
         x = self.dropout(x)
@@ -146,34 +158,44 @@ model_names = ["DCNN", "SE_DCNN", "ECA_DCNN", "CBAM_DCNN", "SA_DCNN"]  # Update 
 
 results = []
 
-def train_and_evaluate(model, model_name, X_train, X_test, y_train, y_test, target_column):
+batch_size = 32  # Define batch size
+k_folds = 5  # Define number of folds
+
+def train_and_evaluate(model, model_name, train_loader, val_loader, target_column):
     criterion = torch.nn.MSELoss()
-    optimizer = optim.RMSprop(model.parameters(), lr=0.0001, weight_decay=1e-5)  # Change optimizer to RMSprop with weight decay
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)  # Adjust learning rate scheduler
-    num_epochs = 500  # Adjust number of epochs
-    early_stopping_patience = 50  # Adjust early stopping patience
+    optimizer = optim.RMSprop(model.parameters(), lr=0.00001, weight_decay=1e-5)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
+    num_epochs = 1500
+    early_stopping_patience = 500
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(device)
-    X_train, X_test, y_train, y_test = X_train.to(device), X_test.to(device), y_train.to(device), y_test.to(device)
 
     best_test_r2 = float('-inf')
     patience_counter = 0
 
     for epoch in range(num_epochs):
         model.train()
-        optimizer.zero_grad()
-        outputs = model(X_train)
-        loss = criterion(outputs, y_train)
-        loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Add gradient clipping
-        optimizer.step()
+        for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            optimizer.zero_grad()
+            outputs = model(X_batch)
+            loss = criterion(outputs, y_batch)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
         scheduler.step()
 
         model.eval()
         with torch.no_grad():
-            y_test_pred = model(X_test).cpu().numpy()
-            test_r2 = r2_score(y_test.cpu().numpy(), y_test_pred)
+            y_test_pred = []
+            y_test_true = []
+            for X_val, y_val in val_loader:
+                X_val, y_val = X_val.to(device), y_val.to(device)
+                preds = model(X_val).cpu().numpy()
+                y_test_pred.extend(preds)
+                y_test_true.extend(y_val.cpu().numpy())
+            test_r2 = r2_score(y_test_true, y_test_pred)
 
         if test_r2 > best_test_r2:
             best_test_r2 = test_r2
@@ -187,16 +209,29 @@ def train_and_evaluate(model, model_name, X_train, X_test, y_train, y_test, targ
 
     model.eval()
     with torch.no_grad():
-        y_train_pred = model(X_train).cpu().numpy()
-        y_test_pred = model(X_test).cpu().numpy()
+        y_train_pred = []
+        y_train_true = []
+        for X_batch, y_batch in train_loader:
+            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
+            preds = model(X_batch).cpu().numpy()
+            y_train_pred.extend(preds)
+            y_train_true.extend(y_batch.cpu().numpy())
 
-    train_r2 = round(r2_score(y_train.cpu().numpy(), y_train_pred), 4)
-    train_rmse = round(np.sqrt(mean_squared_error(y_train.cpu().numpy(), y_train_pred)), 4)
-    train_rpd = round(np.std(y_train.cpu().numpy()) / train_rmse, 4)
+        y_test_pred = []
+        y_test_true = []
+        for X_val, y_val in val_loader:
+            X_val, y_val = X_val.to(device), y_val.to(device)
+            preds = model(X_val).cpu().numpy()
+            y_test_pred.extend(preds)
+            y_test_true.extend(y_val.cpu().numpy())
 
-    test_r2 = round(r2_score(y_test.cpu().numpy(), y_test_pred), 4)
-    test_rmse = round(np.sqrt(mean_squared_error(y_test.cpu().numpy(), y_test_pred)), 4)
-    test_rpd = round(np.std(y_test.cpu().numpy()) / test_rmse, 4)
+    train_r2 = round(r2_score(y_train_true, y_train_pred), 4)
+    train_rmse = round(np.sqrt(mean_squared_error(y_train_true, y_train_pred)), 4)
+    train_rpd = round(np.std(y_train_true) / train_rmse, 4)
+
+    test_r2 = round(r2_score(y_test_true, y_test_pred), 4)
+    test_rmse = round(np.sqrt(mean_squared_error(y_test_true, y_test_pred)), 4)
+    test_rpd = round(np.std(y_test_true) / test_rmse, 4)
 
     print(f"Train R²: {train_r2}, Test R²: {test_r2}")
 
@@ -213,28 +248,40 @@ def train_and_evaluate(model, model_name, X_train, X_test, y_train, y_test, targ
     })
 
     if 0.85 <= test_r2 < 0.99:
-        plot_results(y_test.cpu().numpy(), y_test_pred, f"{dataset_name} - {target_column}", model_name, target_column)
-        shap_analysis(model, X_test.cpu().numpy(), feature_names, target_column, model_name, None, dataset_name)
-        lime_analysis(model, X_test.cpu().numpy(), y_test.cpu().numpy(), feature_names, target_column, model_name, None, dataset_name)
+        plot_results(y_test_true, y_test_pred, f"{dataset_name} - {target_column}", model_name, target_column)
+        shap_analysis(model, np.array(y_test_true), feature_names, target_column, model_name, None, dataset_name)
+        lime_analysis(model, np.array(y_test_true), y_test_pred, feature_names, target_column, model_name, None, dataset_name)
 
 # 设置随机种子
 set_seed()
 
 for file_path, dataset_name in file_paths:
     X, y_dict, feature_names, band_columns = load_data(file_path, target_columns)
-    X = preprocess_data(X)
+    # X = preprocess_data(X)
     X = torch.tensor(X, dtype=torch.float32).unsqueeze(1)
     
+    kfold = KFold(n_splits=k_folds, shuffle=True, random_state=42)
+
     for target_column in target_columns:
         y = y_dict[target_column]
         y = torch.tensor(y, dtype=torch.float32).unsqueeze(1)
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
-        input_dim = X_train.shape[2]
-        for model_name in model_names:
-            attention_type = model_name.split('_')[0] if '_' in model_name else None
-            model = DCNN(input_dim, attention_type).to('cuda' if torch.cuda.is_available() else 'cpu')
-            train_and_evaluate(model, model_name, X_train, X_test, y_train, y_test, target_column)
+        for fold, (train_idx, val_idx) in enumerate(kfold.split(X)):
+            print(f'Fold {fold+1}')
+            X_train, X_val = X[train_idx], X[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
+            
+            train_dataset = TensorDataset(X_train, y_train)
+            val_dataset = TensorDataset(X_val, y_val)
+            
+            train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+            val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+            
+            input_dim = X_train.shape[2]
+            for model_name in model_names:
+                attention_type = model_name.split('_')[0] if '_' in model_name else None
+                model = DCNN(input_dim, attention_type).to('cuda' if torch.cuda.is_available() else 'cpu')
+                train_and_evaluate(model, model_name, train_loader, val_loader, target_column)
 
 # 保存结果到 result_summary.xlsx
 results_df = pd.DataFrame(results)

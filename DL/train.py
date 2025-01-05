@@ -182,7 +182,7 @@ def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batc
 
 def process_dataset(file_path, dataset_name, target_columns, EPOCHS, BATCH_SIZE, LEARNING_RATE, N_SPLITS, SEED, model_types, attention_types, patience, results):
     X, y_dict, feature_columns = load_data(file_path, target_columns)
-    X = preprocess_data(X)
+    # X = preprocess_data(X)
     pca = PCA(n_components=100)
     X = pca.fit_transform(X)
     

@@ -7,11 +7,11 @@ from .SABlock import SABlock  # 添加 SABlock 的导入
 class DCNN(nn.Module):
     def __init__(self, input_dim, attention_type=None):
         super(DCNN, self).__init__()
-        self.conv1 = nn.Conv1d(1, 32, kernel_size=5, padding=2)  # 增加通道数
+        self.conv1 = nn.Conv1d(1, 32, kernel_size=5, padding=4, dilation=2)  # Added dilation=2 and updated padding
         self.bn1 = nn.BatchNorm1d(32)
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)  # 增加通道数
+        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=4, dilation=2)  # Added dilation=2 and updated padding
         self.bn2 = nn.BatchNorm1d(64)
-        self.conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=1)  # 增加通道数
+        self.conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=2, dilation=2)  # Added dilation=2 and updated padding
         self.bn3 = nn.BatchNorm1d(128)
         self.pool = nn.MaxPool1d(kernel_size=2, stride=1)
         self.dropout = nn.Dropout(0.7)  # 进一步增加 dropout

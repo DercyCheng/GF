@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 from scipy.signal import savgol_filter
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.feature_selection import VarianceThreshold
 
 # 读取Excel文件
 data = pd.read_excel('data.xlsx')
@@ -28,17 +31,17 @@ soil_nutrients = {
 }
 spectral_bands = [f'{i}' for i in range(350, 2500)]
 environment_info = {
-    '海拔测量': 'Elevation',
-    'Longitude': 'Longitude',
-    'latitude': 'Latitude',
-    '坡度': 'Slope',
-    '坡向': 'Aspect',
-    '海拔': 'Altitude',
+    '海拔测量': 'ELEV',
+    'Longitude': 'LONG',
+    'latitude': 'LAT',
+    '坡度': 'SLOPE',
+    '坡向': 'ASPECT',
+    '海拔': 'ALT',
     '大于10度积温': 'GDD10',
-    '年均降雨': 'AnnualRainfall',
-    '年均温度': 'AnnualTemp',
-    '代数': 'Generation',
-    '林龄': 'ForestAge'
+    '年均降雨': 'AN_RAIN',
+    '年均温度': 'AN_TEMP',
+    '代数': 'GEN',
+    '林龄': 'FOREST_AGE'
 }
 target_columns = {
     '有机质(g/kg)': 'OM',
@@ -53,6 +56,28 @@ data.columns = data.columns.map(lambda x: f'{x}' if isinstance(x, int) else x)
 
 # 使用别名替换列名
 data.rename(columns={**soil_nutrients, **environment_info}, inplace=True)
+
+# Data preprocessing for spectral bands
+data[spectral_bands] = data[spectral_bands].fillna(data[spectral_bands].mean())
+# Apply SNV normalization
+data[spectral_bands] = data[spectral_bands].apply(lambda x: (x - x.mean()) / x.std(), axis=1)
+
+# Outlier removal using Z-score
+from scipy import stats
+data = data[(np.abs(stats.zscore(data[list(soil_nutrients.values()) + spectral_bands])) < 3).all(axis=1)]
+
+# Apply Min-Max scaling
+scaler = MinMaxScaler()
+data[spectral_bands] = scaler.fit_transform(data[spectral_bands])
+
+# Feature selection: remove low-variance features
+selector = VarianceThreshold(threshold=0.01)
+data = data[list(soil_nutrients.values()) + spectral_bands + list(environment_info.values())]
+data = pd.DataFrame(selector.fit_transform(data), columns=selector.get_feature_names_out())
+
+# Apply PCA for dimensionality reduction
+pca = PCA(n_components=10)
+pca_components = pca.fit_transform(data[spectral_bands])
 
 # 数据集1：土壤养分含量+光谱波段
 dataset1 = data[list(soil_nutrients.values()) + spectral_bands]
