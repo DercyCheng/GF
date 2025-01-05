@@ -96,7 +96,7 @@ def lime_analysis(model, X, y, feature_names, target_column, model_type, attenti
     # plt.show()
     plt.close()
 
-def set_seed(seed=42):
+def set_seed(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -118,7 +118,7 @@ def load_data(file_path, target_columns):
         exit()
 
     data.columns = data.columns.map(str)
-    band_columns = [col for col in data.columns if col.isdigit() and 400 <= int(col) <= 2400]
+    band_columns = [col for col in data.columns if col.isdigit() and 350 <= int(col) <= 2500]
 
     if not band_columns:
         print("No band columns found! Please check the column names format.")

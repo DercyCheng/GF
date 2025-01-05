@@ -471,7 +471,7 @@ def plot_results(y_true, y_pred, title):
     plt.legend()
     plt.grid(True)
     plt.savefig(save_path)  # 保存图像
-    plt.show()
+    # plt.show()
 
 
 def shap_analysis(model, X, feature_names, target_column, model_type, attention_type, dataset_name):
@@ -611,7 +611,7 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
     rmse = np.sqrt(mean_squared_error(y, y_pred))  # 转换为 g·kg⁻¹
     rpd = np.std(y) / rmse
 
-    if plot and 0.85 < r2 <= 0.91:
+    if plot and 0.85 <= r2 < 0.99:
         plot_results(y, y_pred, title)
         shap_analysis(model, X, feature_columns, target_column, model_type, attention_type, dataset_name)
         lime_analysis(model, X, y, feature_columns, target_column, model_type, attention_type, dataset_name)
@@ -620,12 +620,15 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
 
 def main():
     file_paths = [
+        ("../datasets/data_spectral_bands_sgd_dr.xlsx", "SBSD"),
         ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
         ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
         ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
         ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
     ]
-    target_columns = ["易氧化有机碳(mg/g)", "有机碳含量(g/kg)", "水溶性有机碳(mg/g)", "全碳(g/kg)", "有机质(g/kg)"]
+    target_columns = ["EOC", "SOC", "WOC", "TC", "OM"]
+    attention_types = [None, 'SE', 'ECA', 'CBAM']
+    model_types = ['ResNet18', 'VGG7','DCNN']
     results = []
 
     for file_path, dataset_name in file_paths:
@@ -634,8 +637,8 @@ def main():
 
         for target_column, y in y_dict.items():
             print(f"Processing {target_column} from {dataset_name}")
-            for model_type in ['VGG7']:#, 'ResNet18', 'VGG7', 'SATCN','DCNN'
-                for attention_type in [None, 'SE', 'ECA', 'CBAM']:
+            for model_type in model_types:
+                for attention_type in attention_types :
                     print(f"Training {model_type} with attention type: {attention_type}")
                     model = train_model(X, y, input_dim=X.shape[1], model_type=model_type,
                                         attention_type=attention_type)

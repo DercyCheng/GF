@@ -54,15 +54,24 @@ data.columns = data.columns.map(lambda x: f'{x}' if isinstance(x, int) else x)
 
 # 使用别名替换列名
 data.rename(columns={**soil_nutrients, **environment_info}, inplace=True)
+#
+# # Apply SNV normalization to spectral bands
+# data[spectral_bands] = data[spectral_bands].apply(lambda x: (x - x.mean()) / x.std(), axis=1)
+#
+# # Normalize other columns (soil nutrients and environment info)
+# non_spectral_columns = list(soil_nutrients.values()) + list(environment_info.values())
+# numeric_columns = data[non_spectral_columns].select_dtypes(include=[np.number]).columns
+# data[numeric_columns] = data[numeric_columns].apply(lambda x: (x - x.min()) / (x.max() - x.min()), axis=0)
+#
+# # Apply PCA for dimensionality reduction
+# pca = PCA(n_components=10)
+# pca_components = pca.fit_transform(data[spectral_bands])
 
-# Data preprocessing for spectral bands
-data[spectral_bands] = data[spectral_bands].fillna(data[spectral_bands].mean())
-# Apply SNV normalization
-data[spectral_bands] = data[spectral_bands].apply(lambda x: (x - x.mean()) / x.std(), axis=1)
-
-# Apply PCA for dimensionality reduction
-pca = PCA(n_components=10)
-pca_components = pca.fit_transform(data[spectral_bands])
+# Function to apply Savitzky-Golay filter and first derivative
+def apply_sgd(data, bands):
+    sgd_filtered = savgol_filter(data[bands], window_length=5, polyorder=2, deriv=0, axis=0)
+    sgd_derivative = savgol_filter(sgd_filtered, window_length=5, polyorder=2, deriv=1, axis=0)
+    return sgd_derivative
 
 # 数据集1：土壤养分含量+光谱波段
 dataset1 = data[list(soil_nutrients.values()) + spectral_bands]
@@ -71,26 +80,13 @@ dataset1 = data[list(soil_nutrients.values()) + spectral_bands]
 dataset2 = data[list(soil_nutrients.values()) + spectral_bands + list(environment_info.values())]
 
 # 数据集3：土壤养分含量+光谱波段，进行SGD降噪以及DR一阶微分
-# 进行SGD降噪
-sgd_filtered = savgol_filter(data[spectral_bands], window_length=5, polyorder=2, deriv=0, axis=0)
-# 进行一阶微分
-sgd_derivative = savgol_filter(sgd_filtered, window_length=5, polyorder=2, deriv=1, axis=0)
-dataset3 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(sgd_derivative, columns=spectral_bands)], axis=1)
+dataset3 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(apply_sgd(data, spectral_bands), columns=spectral_bands)], axis=1)
 
 # 数据集4：土壤养分含量+光谱波段+环境信息，进行SGD降噪以及一阶微分
-# 进行SGD降噪
-sgd_filtered_env = savgol_filter(data[spectral_bands], window_length=5, polyorder=2, deriv=0, axis=0)
-# 进行一阶微分
-sgd_derivative_env = savgol_filter(sgd_filtered_env, window_length=5, polyorder=2, deriv=1, axis=0)
-dataset4 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(sgd_derivative_env, columns=spectral_bands), data[list(environment_info.values())]], axis=1)
+dataset4 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(apply_sgd(data, spectral_bands), columns=spectral_bands), data[list(environment_info.values())]], axis=1)
 
 # 数据集5：target_columns + 经过SGD+DR处理的光谱波段
-sgd_filtered_target = savgol_filter(data[spectral_bands], window_length=5, polyorder=2, deriv=0, axis=0)
-sgd_derivative_target = savgol_filter(sgd_filtered_target, window_length=5, polyorder=2, deriv=1, axis=0)
-dataset5 = pd.concat([
-    data[list(target_columns.values())],  # 确保包含 'OM' 和 'WOC'
-    pd.DataFrame(sgd_derivative_target, columns=spectral_bands)
-], axis=1)
+dataset5 = pd.concat([data[list(target_columns.values())], pd.DataFrame(apply_sgd(data, spectral_bands), columns=spectral_bands)], axis=1)
 
 # 保存数据集到不同的Excel文件
 dataset1.to_excel('data_soil_nutrients_spectral_bands.xlsx', index=False)

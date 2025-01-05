@@ -119,7 +119,7 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
             train_r2 = r2_score(y_train, model(torch.tensor(X_train, dtype=torch.float32).unsqueeze(1).to(device)).squeeze().cpu().detach().numpy())
             val_r2 = r2_score(y_val, model(torch.tensor(X_val, dtype=torch.float32).unsqueeze(1).to(device)).squeeze().cpu().detach().numpy())
 
-            print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Train R²: {train_r2:.4f}, Val R²: {val_r2:.4f}")
+            print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
@@ -165,7 +165,7 @@ def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batc
         seed=seed,
         patience=patience  # 传入 patience
     )
-    X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=215, random_state=seed)
+    X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=seed)
     test_metrics = evaluate_model(
         model, X_val, y_val, feature_columns, target_column,
         model_type, attention_type, dataset_name,
@@ -182,7 +182,7 @@ def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batc
 
 def process_dataset(file_path, dataset_name, target_columns, EPOCHS, BATCH_SIZE, LEARNING_RATE, N_SPLITS, SEED, model_types, attention_types, patience, results):
     X, y_dict, feature_columns = load_data(file_path, target_columns)
-    # X = preprocess_data(X)
+    X = preprocess_data(X)
     pca = PCA(n_components=100)
     X = pca.fit_transform(X)
     
