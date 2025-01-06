@@ -10,15 +10,10 @@ from tabulate import tabulate
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.decomposition import PCA
 
-
 # Import models
 from models.DCNN import DCNN
 from models.ResNet18 import ResNet18
 from models.VGG7 import VGG7
-# from models.SSLT import SSLT  # 移除导入
-from models.LSTM import LSTM
-from models.TCN import TCN
-from models.CNN_LSTM import CNN_LSTM
 
 # Import utility functions
 from utils import plot_results, shap_analysis, lime_analysis, set_seed, augment_data, load_data, preprocess_data, \
@@ -34,15 +29,10 @@ def initialize_model(model_type, input_dim, attention_type=None):
     model_classes = {
         'ResNet18': ResNet18,
         'VGG7': VGG7,
-        'DCNN': DCNN,
-        'LSTM': LSTM,
-        'TCN': TCN,
-        'CNN_LSTM': CNN_LSTM
+        'DCNN': DCNN
     }
     if model_type not in model_classes:
         raise ValueError(f"Unsupported model type: {model_type}")
-    if model_type == 'TCN':
-        return model_classes[model_type](input_dim, output_size=1, num_channels=[25]*8, kernel_size=7, dropout=0.2)
     elif model_type in ['DCNN']:  # 移除 SSLT
         return model_classes[model_type](input_dim, attention_type=attention_type)
     else:
@@ -61,8 +51,6 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, model_typ
     for X_batch, y_batch in train_loader:
         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
         optimizer.zero_grad()
-        if model_type in ['TCN']:  # 移除 SSLT
-            X_batch = X_batch.permute(0, 2, 1).contiguous()
         outputs = model(X_batch).squeeze()
         loss = criterion(outputs, y_batch)
         loss.backward()
@@ -82,8 +70,8 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
         X_train, X_val = X[train_index], X[val_index]
         y_train, y_val = y[train_index], y[val_index]
 
-        # Data Augmentation
-        X_train, y_train = augment_data(X_train, y_train)
+        # Enhance data augmentation
+        X_train, y_train = augment_data(X_train, y_train)  # Ensure augment_data provides sufficient augmentation
 
         model = initialize_model(model_type, input_dim, attention_type).to(device)
         model.device = device
@@ -93,8 +81,8 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10)  # 移除 verbose=True
+        optimizer = optim.Adam(model.parameters(), lr=0.001)  # Changed optimizer to Adam with higher learning rate
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.3, patience=5)  # More aggressive factor
 
         patience_counter = 0
 
@@ -106,8 +94,6 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
             with torch.no_grad():
                 for X_batch, y_batch in val_loader:
                     X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-                    if model_type in ['TCN']:  # 移除 SSLT
-                        X_batch = X_batch.permute(0, 2, 1).contiguous()
                     outputs = model(X_batch).squeeze()
                     loss = criterion(outputs, y_batch)
                     val_loss += loss.item() * X_batch.size(0)
@@ -119,8 +105,7 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
             train_r2 = r2_score(y_train, model(torch.tensor(X_train, dtype=torch.float32).unsqueeze(1).to(device)).squeeze().cpu().detach().numpy())
             val_r2 = r2_score(y_val, model(torch.tensor(X_val, dtype=torch.float32).unsqueeze(1).to(device)).squeeze().cpu().detach().numpy())
 
-            print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
-
+            # Modify early stopping to monitor validation loss
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 best_model = model
@@ -128,7 +113,7 @@ def train_model(X, y, input_dim, model_type, attention_type, epochs, batch_size,
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
-                    print("Early stopping")
+                    print(f"Early stopping at epoch {epoch + 1}")
                     break
 
     return best_model
@@ -138,8 +123,6 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
     model.eval()
     with torch.no_grad():
         X_tensor = torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device)
-        if model_type in ['TCN']:  # 移除 SSLT
-            X_tensor = X_tensor.squeeze(1)
         torch.tensor(y, dtype=torch.float32).to(device)
         y_pred = model(X_tensor).squeeze().cpu().numpy()
     r2 = r2_score(y, y_pred)
@@ -183,7 +166,7 @@ def train_and_evaluate(X, y, input_dim, model_type, attention_type, epochs, batc
 def process_dataset(file_path, dataset_name, target_columns, EPOCHS, BATCH_SIZE, LEARNING_RATE, N_SPLITS, SEED, model_types, attention_types, patience, results):
     X, y_dict, feature_columns = load_data(file_path, target_columns)
     X = preprocess_data(X)
-    pca = PCA(n_components=100)
+    pca = PCA(n_components=50)
     X = pca.fit_transform(X)
     
     for target_column, y in y_dict.items():
@@ -208,26 +191,27 @@ def process_dataset(file_path, dataset_name, target_columns, EPOCHS, BATCH_SIZE,
                 results.append(
                     (dataset_name, target_column, model_type, attention_type, train_metrics, test_metrics)
                 )
+                print(f"Dataset: {dataset_name}, Target: {target_column}, Model: {model_type}, Attention: {attention_type}, Train R²: {train_metrics[0]}, Train Loss: {train_metrics[1]}, Val R²: {test_metrics[0]}, Val Loss: {test_metrics[1]}")
 
 def main():
     file_paths = [
-        ("../datasets/data_spectral_bands_sgd_dr.xlsx", "SBSD"),
-        ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
-        ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
-        ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
+        # ("../datasets/data_spectral_bands_sgd_dr.xlsx", "SBSD"),
+        # ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
+        # ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
+        # ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
         ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD")
     ]
-    target_columns = ["EOC", "SOC", "WOC", "TC", "OM"]
-    model_types = ['ResNet18','VGG7','DCNN']  # 移除 SSLT
-    attention_types = [ None, 'SE','ECA', 'CBAM', 'SA']  # 移除 SSLT
+    target_columns = ["SOC", "EOC", "WOC", "TC", "OM"]
+    model_types = ['DCNN','ResNet18','VGG7']
+    attention_types = [ None, 'SE','ECA', 'CBAM', 'SA']
     results = []
 
     SEED = 42
-    EPOCHS = 300
+    EPOCHS = 1000  # Increased from 50 to allow more training epochs
     BATCH_SIZE = 32
     LEARNING_RATE = 0.0001
     N_SPLITS = 5
-    PATIENCE = 20  # 定义 patience
+    PATIENCE = 500  # Increased from 20 to allow more patience for early stopping
 
     for file_path, dataset_name in file_paths:
         process_dataset(

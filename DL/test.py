@@ -35,7 +35,7 @@ def load_data(file_path, target_columns):
         exit()
 
     data.columns = data.columns.map(str)
-    band_columns = [col for col in data.columns if col.isdigit() and 400 <= int(col) <= 2400]
+    band_columns = [col for col in data.columns if col.isdigit() and 350 <= int(col) <= 2500]
 
     if not band_columns:
         print("No band columns found! Please check the column names format.")
@@ -117,95 +117,6 @@ class CBAMBlock(nn.Module):
         spatial_out = self.sigmoid_spatial(spatial_out)
         return x * spatial_out.expand_as(x)
 
-
-class DCNNWithAttention(nn.Module):
-    def __init__(self, input_dim, attention_type=None):
-        super(DCNNWithAttention, self).__init__()
-        self.conv1 = nn.Conv1d(1, 32, kernel_size=5, padding=2)
-        self.bn1 = nn.BatchNorm1d(32)
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)
-        self.bn2 = nn.BatchNorm1d(64)
-        self.conv3 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm1d(128)
-        self.conv4 = nn.Conv1d(128, 256, kernel_size=3, padding=1)
-        self.bn4 = nn.BatchNorm1d(256)
-        self.conv5 = nn.Conv1d(256, 512, kernel_size=3, padding=1)
-        self.bn5 = nn.BatchNorm1d(512)
-        self.conv6 = nn.Conv1d(512, 1024, kernel_size=3, padding=1)
-        self.bn6 = nn.BatchNorm1d(1024)
-        self.pool = nn.MaxPool1d(kernel_size=2, stride=2)
-        self.dropout = nn.Dropout(0.5)
-        self.adaptive_pool = nn.AdaptiveAvgPool1d(1)
-
-        self.attention_type = attention_type
-        if (attention_type == 'SE'):
-            self.attention1 = SEBlock(32)
-            self.attention2 = SEBlock(64)
-            self.attention3 = SEBlock(128)
-            self.attention4 = SEBlock(256)
-            self.attention5 = SEBlock(512)
-            self.attention6 = SEBlock(1024)  # 新增注意力层
-        elif (attention_type == 'ECA'):
-            self.attention1 = ECABlock(32)
-            self.attention2 = ECABlock(64)
-            self.attention3 = ECABlock(128)
-            self.attention4 = ECABlock(256)
-            self.attention5 = ECABlock(512)
-            self.attention6 = ECABlock(1024)  # 新增注意力层
-        elif (attention_type == 'CBAM'):
-            self.attention1 = CBAMBlock(32)
-            self.attention2 = CBAMBlock(64)
-            self.attention3 = CBAMBlock(128)
-            self.attention4 = CBAMBlock(256)
-            self.attention5 = CBAMBlock(512)
-            self.attention6 = CBAMBlock(1024)  # 新���注意力层
-        else:
-            self.attention1 = self.attention2 = self.attention3 = self.attention4 = self.attention5 = self.attention6 = None
-
-        self.fc1 = nn.Linear(1024, 1024)  # 更新全连接层
-        self.fc2 = nn.Linear(1024, 512)
-        self.fc3 = nn.Linear(512, 256)
-        self.fc4 = nn.Linear(256, 128)
-        self.fc5 = nn.Linear(128, 1)  # 新增全连接层
-        self.relu = nn.ReLU(inplace=False)  # 修改 inplace 参数
-        self.leaky_relu = nn.LeakyReLU(inplace=False)
-        self.elu = nn.ELU(inplace=False)
-
-    def forward(self, x):
-        x = self.leaky_relu(self.bn1(self.conv1(x)))
-        if self.attention1:
-            x = self.attention1(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn2(self.conv2(x)))
-        if self.attention2:
-            x = self.attention2(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn3(self.conv3(x)))
-        if self.attention3:
-            x = self.attention3(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn4(self.conv4(x)))
-        if self.attention4:
-            x = self.attention4(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn5(self.conv5(x)))
-        if self.attention5:
-            x = self.attention5(x)
-        x = self.pool(x)
-        x = self.leaky_relu(self.bn6(self.conv6(x)))  # 新增前向传播
-        if self.attention6:
-            x = self.attention6(x)
-        x = self.adaptive_pool(x)
-        x = x.view(x.size(0), -1)
-        x = self.dropout(x)
-        x = self.elu(self.fc1(x))
-        x = self.elu(self.fc2(x))
-        x = self.elu(self.fc3(x))
-        x = self.elu(self.fc4(x))
-        x = self.fc5(x)  # 新增前向传播
-        return x
-
-
 class DCNN(nn.Module):
     def __init__(self, input_dim, attention_type=None):
         super(DCNN, self).__init__()
@@ -213,7 +124,8 @@ class DCNN(nn.Module):
         self.bn1 = nn.BatchNorm1d(64)
         self.conv2 = nn.Conv1d(64, 128, kernel_size=5, padding=2)
         self.bn2 = nn.BatchNorm1d(128)
-        self.conv3 = nn.Conv1d(128, 256, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv1d(128, 256, kernel_size=3, padding=1, dilation=1)
+        self.conv3_dilated = nn.Conv1d(128, 256, kernel_size=3, padding=2, dilation=2)  # Added dilated convolution
         self.bn3 = nn.BatchNorm1d(256)
         self.conv4 = nn.Conv1d(256, 512, kernel_size=3, padding=1)
         self.bn4 = nn.BatchNorm1d(512)
@@ -263,7 +175,10 @@ class DCNN(nn.Module):
         if self.attention2:
             x = self.attention2(x)
         x = self.pool(x)
-        x = self.leaky_relu(self.bn3(self.conv3(x)))
+        # Multi-scale feature fusion
+        out1 = self.leaky_relu(self.bn3(self.conv3(x)))
+        out2 = self.leaky_relu(self.bn3(self.conv3_dilated(x)))
+        x = torch.cat([out1, out2], dim=1)  # Fuse features
         if self.attention3:
             x = self.attention3(x)
         x = self.pool(x)
@@ -297,77 +212,6 @@ class ResNet18(nn.Module):
         x = self.resnet(x)
         return x
 
-
-class Chomp1d(nn.Module):
-    def __init__(self, chomp_size):
-        super(Chomp1d, self).__init__()
-        self.chomp_size = chomp_size
-
-    def forward(self, x):
-        return x[:, :, :-self.chomp_size].contiguous()
-
-
-class TemporalBlock(nn.Module):
-    def __init__(self, n_inputs, n_outputs, kernel_size, stride, dilation, padding, dropout=0.2):
-        super(TemporalBlock, self).__init__()
-        self.conv1 = weight_norm(nn.Conv1d(n_inputs, n_outputs, kernel_size,
-                                           stride=stride, padding=padding, dilation=dilation))
-        self.chomp1 = Chomp1d(padding)
-        self.relu1 = nn.ReLU(inplace=False)  # 修改 inplace 参数
-        self.dropout1 = nn.Dropout(dropout)
-
-        self.conv2 = weight_norm(nn.Conv1d(n_outputs, n_outputs, kernel_size,
-                                           stride=stride, padding=padding, dilation=dilation))
-        self.chomp2 = Chomp1d(padding)
-        self.relu2 = nn.ReLU(inplace=False)  # 修改 inplace 参数
-        self.dropout2 = nn.Dropout(dropout)
-
-        self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
-                                 self.conv2, self.chomp2, self.relu2, self.dropout2)
-        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
-        self.relu = nn.ReLU(inplace=False)  # 修改 inplace 参数
-        self.init_weights()
-
-    def init_weights(self):
-        self.conv1.weight.data.normal_(0, 0.01)
-        self.conv2.weight.data.normal_(0, 0.01)
-        if self.downsample is not None:
-            self.downsample.weight.data.normal_(0, 0.01)
-
-    def forward(self, x):
-        out = self.net(x)
-        res = x if self.downsample is None else self.downsample(x)
-        return self.relu(out + res)
-
-
-class TemporalConvNet(nn.Module):
-    def __init__(self, num_inputs, num_channels, kernel_size=2, dropout=0.2):
-        super(TemporalConvNet, self).__init__()
-        layers = []
-        num_levels = len(num_channels)
-        for i in range(num_levels):
-            dilation_size = 2 ** i
-            in_channels = num_inputs if i == 0 else num_channels[i - 1]
-            out_channels = num_channels[i]
-            layers += [TemporalBlock(in_channels, out_channels, kernel_size, stride=1, dilation=dilation_size,
-                                     padding=(kernel_size - 1) * dilation_size, dropout=dropout)]
-
-        self.network = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.network(x)
-
-
-class TCN(nn.Module):
-    def __init__(self, input_dim, num_channels, kernel_size=2, dropout=0.2):
-        super(TCN, self).__init__()
-        self.tcn = TemporalConvNet(1, num_channels, kernel_size, dropout)  # 修改输入通道数为1
-        self.linear = nn.Linear(num_channels[-1], 1)
-
-    def forward(self, x):
-        y1 = self.tcn(x)
-        o = self.linear(y1[:, :, -1])
-        return o
 
 
 class VGG7(nn.Module):
@@ -411,29 +255,6 @@ class VGG7(nn.Module):
         return x
 
 
-class SATCN(nn.Module):
-    def __init__(self, input_dim, num_channels, kernel_size=2, dropout=0.2, attention_type=None):
-        super(SATCN, self).__init__()
-        self.tcn = TemporalConvNet(1, num_channels, kernel_size, dropout)  # 修改输入通道数为1
-        self.attention_type = attention_type
-        if attention_type == 'SE':
-            self.attention = SEBlock(num_channels[-1])
-        elif attention_type == 'ECA':
-            self.attention = ECABlock(num_channels[-1])
-        elif attention_type == 'CBAM':
-            self.attention = CBAMBlock(num_channels[-1])
-        else:
-            self.attention = None
-        self.linear = nn.Linear(num_channels[-1], 1)
-
-    def forward(self, x):
-        y1 = self.tcn(x)
-        if self.attention:
-            y1 = self.attention(y1)
-        o = self.linear(y1[:, :, -1])
-        return o
-
-
 def ensure_dir(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
@@ -444,9 +265,9 @@ def sanitize_filename(filename):
     return re.sub(r'[\/:*?"<>|]', '-', filename)
 
 
-def plot_results(y_true, y_pred, title):
+def plot_results(y_true, y_pred, title, model_type, target_column):
     save_title = sanitize_filename(title)
-    save_path = f"output/scatter/{save_title}_scatter.png"
+    save_path = f"output/{sanitize_filename(target_column)}/scatter/{save_title}_scatter.png"
     ensure_dir(os.path.dirname(save_path))
     plt.figure(figsize=(8, 8))
     plt.scatter(y_true, y_pred, label='Predicted vs Actual', alpha=0.6)
@@ -454,7 +275,7 @@ def plot_results(y_true, y_pred, title):
 
     # 拟合线
     m, b = np.polyfit(y_true, y_pred, 1)
-    plt.plot(y_true, m * y_true + b, 'b-', label=f'Fit Line: y={m:.2f}x+{b:.2f}')
+    plt.plot(y_true, m * y_true + b, 'b-', label=f'Fit Line: y={float(m):.2f}x+{float(b):.2f}')
 
     # 计算 R², RMSE, RPD
     r2 = r2_score(y_true, y_pred)
@@ -462,7 +283,7 @@ def plot_results(y_true, y_pred, title):
     rpd = np.std(y_true) / rmse
 
     # 左上角显示 R², RMSE, RPD
-    plt.text(0.05, 0.95, f'R²: {r2:.4f}\nRMSE: {rmse:.4f} g·kg⁻¹\nRPD: {rpd:.4f}',
+    plt.text(0.05, 0.95, f'R^2: {r2:.4f}\nRMSE: {rmse:.4f} g·kg^-1\nRPD: {rpd:.4f}',
              transform=plt.gca().transAxes, fontsize=12, verticalalignment='top')
 
     plt.xlabel('Actual')
@@ -471,16 +292,33 @@ def plot_results(y_true, y_pred, title):
     plt.legend()
     plt.grid(True)
     plt.savefig(save_path)  # 保存图像
-    # plt.show()
+    plt.close()
 
+def plot_loss_curve(all_train_losses, all_val_losses, target_column, model_type, dataset_name, attention_type=None):
+    save_title = sanitize_filename(f"LOSS_{dataset_name}_{target_column}_{attention_type}_{model_type}") if attention_type else sanitize_filename(f"LOSS_{dataset_name}_{target_column}_{model_type}")
+    save_path = f"output/{sanitize_filename(target_column)}/loss/{save_title}.png"  # 保存路径�� shap 一致
+    ensure_dir(os.path.dirname(save_path))
+    plt.figure(figsize=(12, 8))
+    
+    for fold, (train_losses, val_losses) in enumerate(zip(all_train_losses, all_val_losses), 1):
+        plt.plot(train_losses, label=f'Fold {fold} Training Loss')
+        plt.plot(val_losses, label=f'Fold {fold} Validation Loss')
+    
+    plt.title(f'Loss Curves for {model_type} on {target_column}')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_path)
+    plt.close()
 
 def shap_analysis(model, X, feature_names, target_column, model_type, attention_type, dataset_name):
-    save_title = sanitize_filename(f"SHAP_{dataset_name}_{target_column}_{attention_type}_{model_type}")
-    save_path = f"output/shap/{save_title}.png"
+    save_title = sanitize_filename(f"SHAP_{dataset_name}_{target_column}_{attention_type}_{model_type}") if attention_type else sanitize_filename(f"SHAP_{dataset_name}_{target_column}_{model_type}")
+    save_path = f"output/{sanitize_filename(target_column)}/shap/{save_title}.png"
     ensure_dir(os.path.dirname(save_path))
     model.eval()
-    explainer = shap.GradientExplainer(model, torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device))
-    shap_values = explainer.shap_values(torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device))
+    explainer = shap.GradientExplainer(model, torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(model.device))
+    shap_values = explainer.shap_values(torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(model.device))
 
     if isinstance(shap_values, list):
         shap_values = shap_values[0]
@@ -491,20 +329,19 @@ def shap_analysis(model, X, feature_names, target_column, model_type, attention_
     X_df = pd.DataFrame(X, columns=feature_names)
 
     shap.summary_plot(shap_values, X_df, show=False)
-    plt.title(f"SHAP - {target_column} ({attention_type}-{model_type}) - {dataset_name}")
+    plt.title(f"SHAP - {target_column} ({attention_type}-{model_type}) - {dataset_name}" if attention_type else f"SHAP - {target_column} ({model_type}) - {dataset_name}")
     plt.savefig(save_path, bbox_inches='tight')  # 保存图像
     plt.close()
 
-
 def lime_analysis(model, X, y, feature_names, target_column, model_type, attention_type, dataset_name):
-    save_title = sanitize_filename(f"LIME_{dataset_name}_{target_column}_{attention_type}_{model_type}")
-    save_path = f"output/lime/{save_title}.png"
+    save_title = sanitize_filename(f"LIME_{dataset_name}_{target_column}_{attention_type}_{model_type}") if attention_type else sanitize_filename(f"LIME_{dataset_name}_{target_column}_{model_type}")
+    save_path = f"output/{sanitize_filename(target_column)}/lime/{save_title}.png"
     ensure_dir(os.path.dirname(save_path))
     model.eval()
     with torch.no_grad():
         # 定义预测函数
         def predict_fn(data):
-            data_tensor = torch.tensor(data, dtype=torch.float32).unsqueeze(1).to(device)
+            data_tensor = torch.tensor(data, dtype=torch.float32).unsqueeze(1).to(model.device)
             return model(data_tensor).cpu().detach().numpy().flatten()
     explainer = lime.lime_tabular.LimeTabularExplainer(
         X, mode='regression', feature_names=feature_names, verbose=True, feature_selection='auto'
@@ -516,14 +353,14 @@ def lime_analysis(model, X, y, feature_names, target_column, model_type, attenti
     # 生成并显示解释结果的图形
     fig = exp.as_pyplot_figure()
     fig.set_size_inches(8, 4)  # 调整图形比例
-    plt.title(f"LIME - {target_column} ({attention_type}-{model_type}) - {dataset_name}")
+    plt.title(f"LIME - {target_column} ({attention_type}-{model_type}) - {dataset_name}" if attention_type else f"LIME - {target_column} ({model_type}) - {dataset_name}")
     plt.tight_layout()  # 确保左侧列名显示完全
     plt.savefig(save_path)  # 保存图像
-    plt.show()
+    # plt.show()
     plt.close()
 
 
-def train_model(X, y, input_dim, model_type='DCNN', attention_type=None, epochs=500, batch_size=32,
+def train_model(X, y, input_dim, model_type='DCNN', attention_type=None, epochs=50, batch_size=32,
                 learning_rate=0.0001, n_splits=5):
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     best_model = None
@@ -536,14 +373,10 @@ def train_model(X, y, input_dim, model_type='DCNN', attention_type=None, epochs=
 
         if model_type == 'ResNet18':
             model = ResNet18().to(device)
-        elif model_type == 'TCN':
-            model = TCN(input_dim, [64, 128, 256, 512]).to(device)
         elif model_type == 'VGG7':
             model = VGG7(input_dim).to(device)
-        elif model_type == 'SATCN':
-            model = SATCN(input_dim, [64, 128, 256, 512], attention_type=attention_type).to(device)
         else:
-            model = DCNNWithAttention(input_dim, attention_type).to(device)
+            model = DCNN(input_dim, attention_type).to(device)
         criterion = nn.MSELoss()
         optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)  # L2正则化
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5, factor=0.5)
