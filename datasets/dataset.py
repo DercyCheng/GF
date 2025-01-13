@@ -73,6 +73,11 @@ def apply_sgd(data, bands):
     sgd_derivative = savgol_filter(sgd_filtered, window_length=5, polyorder=2, deriv=1, axis=0)
     return sgd_derivative
 
+# Function to apply Standard Normal Variate (SNV) normalization
+def apply_sae(data, bands):
+    sae_normalized = (data[bands] - data[bands].mean(axis=0)) / data[bands].std(axis=0)
+    return sae_normalized
+
 # 数据集1：土壤养分含量+光谱波段
 dataset1 = data[list(soil_nutrients.values()) + spectral_bands]
 
@@ -88,9 +93,21 @@ dataset4 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(apply_sg
 # 数据集5：target_columns + 经过SGD+DR处理的光谱波段
 dataset5 = pd.concat([data[list(target_columns.values())], pd.DataFrame(apply_sgd(data, spectral_bands), columns=spectral_bands)], axis=1)
 
+# 数据集6：土壤养分含量+光谱波段，进行SAE处理
+dataset6 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(apply_sae(data, spectral_bands), columns=spectral_bands)], axis=1)
+
+# 数据集7：土壤养分含量+光谱波段+环境信息，进行SAE处理
+dataset7 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(apply_sae(data, spectral_bands), columns=spectral_bands), data[list(environment_info.values())]], axis=1)
+
+# 数据集8：target_columns + 经过SAE处理的光谱波段
+dataset8 = pd.concat([data[list(target_columns.values())], pd.DataFrame(apply_sae(data, spectral_bands), columns=spectral_bands)], axis=1)
+
 # 保存数据集到不同的Excel文件
 dataset1.to_excel('data_soil_nutrients_spectral_bands.xlsx', index=False)
 dataset2.to_excel('data_soil_nutrients_spectral_bands_environment.xlsx', index=False)
 dataset3.to_excel('data_soil_nutrients_spectral_bands_sgd_dr.xlsx', index=False)
 dataset4.to_excel('data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx', index=False)
 dataset5.to_excel('data_spectral_bands_sgd_dr.xlsx', index=False)
+dataset6.to_excel('data_soil_nutrients_spectral_bands_sae.xlsx', index=False)
+dataset7.to_excel('data_soil_nutrients_spectral_bands_environment_sae.xlsx', index=False)
+dataset8.to_excel('data_spectral_bands_sae.xlsx', index=False)
