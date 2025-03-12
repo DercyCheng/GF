@@ -115,6 +115,8 @@ def optimize_hyperparameters(model_name, X, y):
             params = {
                 "n_estimators": trial.suggest_int("n_estimators", 50, 200),
                 "max_depth": trial.suggest_int("max_depth", 3, 10),
+                "min_samples_split": trial.suggest_int("min_samples_split", 2, 10),
+                "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 4),
                 "random_state": 42
             }
             model = RandomForestRegressor(**params)
@@ -123,6 +125,8 @@ def optimize_hyperparameters(model_name, X, y):
                 "n_estimators": trial.suggest_int("n_estimators", 50, 200),
                 "learning_rate": trial.suggest_loguniform("learning_rate", 0.01, 0.1),
                 "max_depth": trial.suggest_int("max_depth", 2, 5),
+                "reg_alpha": trial.suggest_loguniform("reg_alpha", 1e-4, 1e1),
+                "reg_lambda": trial.suggest_loguniform("reg_lambda", 1e-4, 1e1),
                 "verbosity": 0,
                 "random_state": 42
             }
@@ -132,6 +136,8 @@ def optimize_hyperparameters(model_name, X, y):
                 "n_estimators": trial.suggest_int("n_estimators", 50, 200),
                 "learning_rate": trial.suggest_loguniform("learning_rate", 0.01, 0.1),
                 "max_depth": trial.suggest_int("max_depth", 2, 5),
+                "reg_alpha": trial.suggest_loguniform("reg_alpha", 1e-4, 1e1),
+                "reg_lambda": trial.suggest_loguniform("reg_lambda", 1e-4, 1e1),
                 "random_state": 42
             }
             model = LGBMRegressor(**params)

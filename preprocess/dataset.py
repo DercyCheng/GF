@@ -1,7 +1,11 @@
 import pandas as pd
 import numpy as np
 from scipy.signal import savgol_filter
-from sklearn.decomposition import PCA
+import os
+
+# Set output directory
+output_dir = 'output'
+os.makedirs(output_dir, exist_ok=True)
 
 # 读取Excel文件
 data = pd.read_excel('data.xlsx')
@@ -27,7 +31,7 @@ soil_nutrients = {
     '有机碳含量(g/kg)': 'SOC',
     '水溶性有机碳(mg/g)': 'WOC'
 }
-spectral_bands = [f'{i}' for i in range(350, 2500)]
+spectral_bands = [f'{i}' for i in range(350, 2501)]
 environment_info = {
     '海拔测量': 'ELEV',
     'Longitude': 'LONG',
@@ -103,11 +107,11 @@ dataset7 = pd.concat([data[list(soil_nutrients.values())], pd.DataFrame(apply_sa
 dataset8 = pd.concat([data[list(target_columns.values())], pd.DataFrame(apply_sae(data, spectral_bands), columns=spectral_bands)], axis=1)
 
 # 保存数据集到不同的Excel文件
-dataset1.to_excel('data_soil_nutrients_spectral_bands.xlsx', index=False)
-dataset2.to_excel('data_soil_nutrients_spectral_bands_environment.xlsx', index=False)
-dataset3.to_excel('data_soil_nutrients_spectral_bands_sgd_dr.xlsx', index=False)
-dataset4.to_excel('data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx', index=False)
-dataset5.to_excel('data_spectral_bands_sgd_dr.xlsx', index=False)
-dataset6.to_excel('data_soil_nutrients_spectral_bands_sae.xlsx', index=False)
-dataset7.to_excel('data_soil_nutrients_spectral_bands_environment_sae.xlsx', index=False)
-dataset8.to_excel('data_spectral_bands_sae.xlsx', index=False)
+dataset1.to_excel(os.path.join(output_dir, 'data_soil_nutrients_spectral_bands.xlsx'), index=False)
+dataset2.to_excel(os.path.join(output_dir, 'data_soil_nutrients_spectral_bands_environment.xlsx'), index=False)
+dataset3.to_excel(os.path.join(output_dir, 'data_soil_nutrients_spectral_bands_sgd_dr.xlsx'), index=False)
+dataset4.to_excel(os.path.join(output_dir, 'data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx'), index=False)
+dataset5.to_excel(os.path.join(output_dir, 'data_spectral_bands_sgd_dr.xlsx'), index=False)
+dataset6.to_excel(os.path.join(output_dir, 'data_soil_nutrients_spectral_bands_sae.xlsx'), index=False)
+dataset7.to_excel(os.path.join(output_dir, 'data_soil_nutrients_spectral_bands_environment_sae.xlsx'), index=False)
+dataset8.to_excel(os.path.join(output_dir, 'data_spectral_bands_sae.xlsx'), index=False)

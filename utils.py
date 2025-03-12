@@ -25,7 +25,7 @@ def plot_results(y_true, y_pred, title, model_type, target_column):
     save_title = sanitize_filename(title)
     save_path = f"output/{sanitize_filename(target_column)}/scatter/{save_title}_scatter.png"
     ensure_dir(os.path.dirname(save_path))
-    plt.figure(figsize=(8, 8))
+    plt.figure(figsize=(10, 10))
     plt.scatter(y_true, y_pred, label='Predicted vs Actual', alpha=0.6)
     plt.plot([min(y_true), max(y_true)], [min(y_true), max(y_true)], 'r--', label='1:1 Line')
 
@@ -226,4 +226,110 @@ def plot_accuracy_and_loss(epochs, train_losses, val_losses, r2_scores, rmse_val
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(save_path)
+    plt.close()
+
+def plot_spectral_curves(X, feature_names, target_column, model_type, dataset_name):
+    """绘制光谱曲线图"""
+    save_title = sanitize_filename(f"Spectral_Curves_{dataset_name}_{target_column}_{model_type}")
+    save_path = f"output/{sanitize_filename(target_column)}/spectral/{save_title}.png"
+    ensure_dir(os.path.dirname(save_path))
+    
+    plt.figure(figsize=(12, 6))
+    mean_curve = np.mean(X, axis=0)
+    std_curve = np.std(X, axis=0)
+    
+    # Use feature indices instead of trying to convert to wavelengths
+    x_values = np.arange(len(mean_curve))
+    
+    plt.plot(x_values, mean_curve, 'b-', label='Mean Spectral Curve')
+    plt.fill_between(x_values, 
+                     mean_curve - std_curve,
+                     mean_curve + std_curve,
+                     alpha=0.2,
+                     color='b',
+                     label='±1 SD')
+    
+    plt.xlabel('Feature Index')
+    plt.ylabel('Value')
+    plt.title(f'Spectral Features Analysis - {target_column}')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_correlation_matrix(X, feature_names, target_column, model_type, dataset_name):
+    """绘制相关性矩阵热图"""
+    save_title = sanitize_filename(f"Correlation_Matrix_{dataset_name}_{target_column}_{model_type}")
+    save_path = f"output/{sanitize_filename(target_column)}/correlation/{save_title}.png"
+    ensure_dir(os.path.dirname(save_path))
+    
+    corr_matrix = np.corrcoef(X.T)
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(corr_matrix, 
+                xticklabels=False, 
+                yticklabels=False,
+                cmap='RdBu_r',
+                center=0)
+    
+    plt.title(f'Spectral Correlation Matrix - {target_column}')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_feature_importance(importance_scores, feature_names, target_column, model_type, dataset_name):
+    """绘制特征重要性图"""
+    save_title = sanitize_filename(f"Feature_Importance_{dataset_name}_{target_column}_{model_type}")
+    save_path = f"output/{sanitize_filename(target_column)}/importance/{save_title}.png"
+    ensure_dir(os.path.dirname(save_path))
+    
+    # 获取前20个最重要的特征
+    indices = np.argsort(importance_scores)[-20:]
+    
+    plt.figure(figsize=(12, 8))
+    plt.barh(range(20), importance_scores[indices])
+    plt.yticks(range(20), [feature_names[i] for i in indices])
+    plt.xlabel('Feature Importance Score')
+    plt.title(f'Top 20 Important Features - {target_column}')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_regression_diagnostics(y_true, y_pred, target_column, model_type, dataset_name):
+    """绘制回归诊断图"""
+    save_title = sanitize_filename(f"Regression_Diagnostics_{dataset_name}_{target_column}_{model_type}")
+    save_path = f"output/{sanitize_filename(target_column)}/diagnostics/{save_title}.png"
+    ensure_dir(os.path.dirname(save_path))
+    
+    residuals = y_pred - y_true
+    
+    fig, axes = plt.subplots(2, 2, figsize=(15, 15))
+    fig.suptitle(f'Regression Diagnostics - {target_column}')
+    
+    # Residuals vs Fitted
+    axes[0, 0].scatter(y_pred, residuals, alpha=0.5)
+    axes[0, 0].axhline(y=0, color='r', linestyle='--')
+    axes[0, 0].set_xlabel('Fitted values')
+    axes[0, 0].set_ylabel('Residuals')
+    axes[0, 0].set_title('Residuals vs Fitted')
+    
+    # Q-Q plot
+    from scipy import stats
+    stats.probplot(residuals, dist="norm", plot=axes[0, 1])
+    axes[0, 1].set_title('Normal Q-Q Plot')
+    
+    # Histogram of residuals
+    axes[1, 0].hist(residuals, bins=30, edgecolor='black')
+    axes[1, 0].set_xlabel('Residuals')
+    axes[1, 0].set_ylabel('Frequency')
+    axes[1, 0].set_title('Histogram of Residuals')
+    
+    # Scale-Location plot
+    standardized_residuals = residuals / np.std(residuals)
+    axes[1, 1].scatter(y_pred, np.abs(standardized_residuals), alpha=0.5)
+    axes[1, 1].set_xlabel('Fitted values')
+    axes[1, 1].set_ylabel('|Standardized Residuals|')
+    axes[1, 1].set_title('Scale-Location Plot')
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()

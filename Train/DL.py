@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.decomposition import PCA
 import optuna
 
+from preprocess.dataset import environment_info,soil_nutrients
 # Import models
 from models.DCNN import DCNN
 from models.ResNet18 import ResNet18
@@ -25,33 +26,43 @@ plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'Microsoft YaHe
 plt.rcParams['axes.unicode_minus'] = False
 
 file_paths = [
-    ("../datasets/data_spectral_bands_sgd_dr.xlsx", "SBSD"),
-    ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
-    ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
-    ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
+    # ("../datasets/data_spectral_bands_sgd_dr.xlsx", "SBSD"),
+    # ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
+    # ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
+    # ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
     ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD"),
-    ("../datasets/data_soil_nutrients_spectral_bands_sae.xlsx", "SNSBSAE"),
+    # ("../datasets/data_soil_nutrients_spectral_bands_sae.xlsx", "SNSBSAE"),
     ("../datasets/data_soil_nutrients_spectral_bands_environment_sae.xlsx", "SNSBESAE"),
-    ("../datasets/data_spectral_bands_sae.xlsx", "SBSAE")
+    # ("../datasets/data_spectral_bands_sae.xlsx", "SBSAE")
 ]
 target_columns = ["SOC", "EOC", "WOC", "TC", "OM"]
-model_types = ['DCNN', 'ResNet18', 'VGG7']
-attention_types = [None, 'SE', 'ECA', 'CBAM', 'SA']
+model_types = [
+    'DCNN', 'SE-DCNN', 'ECA-DCNN', 'CBAM-DCNN',
+    'ResNet18', 'VGG7',
+]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
 
 def initialize_model(model_type, input_dim, attention_type=None):
+    # Parse attention type from model name if it contains a hyphen
+    if '-' in model_type:
+        attention_type, base_model = model_type.split('-')
+    else:
+        base_model = model_type
+        attention_type = None
+
     model_classes = {
         'ResNet18': ResNet18,
         'VGG7': VGG7,
         'DCNN': DCNN
     }
-    if model_type not in model_classes:
-        raise ValueError(f"Unsupported model type: {model_type}")
-    elif model_type in ['DCNN']:  # 移除 SSLT
-        return model_classes[model_type](input_dim, attention_type=attention_type)
+    
+    if base_model not in model_classes:
+        raise ValueError(f"Unsupported model type: {base_model}")
+    elif base_model in ['DCNN']:
+        return model_classes[base_model](input_dim, attention_type=attention_type)
     else:
-        return model_classes[model_type](input_dim)
+        return model_classes[base_model](input_dim)
 
 def prepare_dataset(X_train, y_train, X_val, y_val, model_type):
     train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32).unsqueeze(1),
@@ -229,32 +240,31 @@ def train_and_evaluate(X, y, input_dim, model_type, attention_type, device, feat
     )
     return train_metrics, test_metrics, best_val_loss
 
-def process_dataset(X, y_dict, feature_columns, dataset_name, device, model_types, attention_types, results):
+def process_dataset(X, y_dict, feature_columns, dataset_name, device, model_types, results):
     for target_column, y in y_dict.items():
         print(f"Processing {target_column} from {dataset_name}")
         for model_type in model_types:
-            for attention_type in attention_types:
-                print(f"Training {model_type} with attention type: {attention_type}")
-                hyperparams = {                            # Added hyperparams dictionary
-                    'epochs': 100,
-                    'batch_size': 32,
-                    'learning_rate': 1e-3,
-                    'patience': 100
-                }
-                train_metrics, test_metrics, _ = train_and_evaluate(
-                    X, y, input_dim=X.shape[1],
-                    model_type=model_type,
-                    attention_type=attention_type,
-                    device=device,
-                    feature_columns=feature_columns,
-                    target_column=target_column,
-                    dataset_name=dataset_name,
-                    hyperparams=hyperparams                   # Passed hyperparams
-                )
-                results.append(
-                    (dataset_name, target_column, model_type, attention_type, train_metrics, test_metrics)
-                )
-                print(f"Dataset: {dataset_name}, Target: {target_column}, Model: {model_type}, Attention: {attention_type}, Train R²: {train_metrics[0]}, Train Loss: {train_metrics[1]}, Val R²: {test_metrics[0]}, Val Loss: {test_metrics[1]}")
+            print(f"Training {model_type}")
+            hyperparams = {
+                'epochs': 100,
+                'batch_size': 32,
+                'learning_rate': 1e-3,
+                'patience': 100
+            }
+            train_metrics, test_metrics, _ = train_and_evaluate(
+                X, y, input_dim=X.shape[1],
+                model_type=model_type,
+                attention_type=None,  # This is now ignored as attention type is parsed from model_type
+                device=device,
+                feature_columns=feature_columns,
+                target_column=target_column,
+                dataset_name=dataset_name,
+                hyperparams=hyperparams
+            )
+            results.append(
+                (dataset_name, target_column, model_type, train_metrics, test_metrics)
+            )
+            print(f"Dataset: {dataset_name}, Target: {target_column}, Model: {model_type}, Train R²: {train_metrics[0]}, Train Loss: {train_metrics[1]}, Val R²: {test_metrics[0]}, Val Loss: {test_metrics[1]}")
 
 def objective(trial, X, y, model_type, feature_columns, target_column, dataset_name):
     batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
@@ -303,16 +313,15 @@ def main():
 
         process_dataset(
             X, y_dict, feature_columns, dataset_name,
-            device,
-            model_types, attention_types, results
+            device, model_types, results
         )
 
-    headers = ["Dataset", "Target", "Model", "Attention", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
+    headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
     table = [
-        [dataset_name, target_column, model_type, attention_type, 
+        [dataset_name, target_column, model_type,
          f"{train_metrics[0]:.4f}", f"{train_metrics[1]:.4f}", f"{train_metrics[2]:.4f}", 
          f"{test_metrics[0]:.4f}", f"{test_metrics[1]:.4f}", f"{test_metrics[2]:.4f}"]
-        for dataset_name, target_column, model_type, attention_type, train_metrics, test_metrics in results
+        for dataset_name, target_column, model_type, train_metrics, test_metrics in results
     ]
 
     print("\nResults Summary:")
