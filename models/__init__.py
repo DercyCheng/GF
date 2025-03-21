@@ -5,5 +5,5 @@ from .DCNN import DCNN
 from .ResNet18 import ResNet18
 from .VGG7 import VGG7
 from .Transformer import Transformer
-from .MultiModalTransformer import MultiModalTransformer
+
 # ...existing code...

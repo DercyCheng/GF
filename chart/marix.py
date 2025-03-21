@@ -14,7 +14,7 @@ else:  # Linux
 rcParams['axes.unicode_minus'] = False
 
 # 读取Excel文件
-data = pd.read_excel('../data.xlsx')
+data = pd.read_excel('../datasets/data.xlsx')
 
 # 定义列名及其别名
 soil_nutrients = {
@@ -66,7 +66,7 @@ correlation_matrix = data_selected.corr()
 # 绘制相关性矩阵图
 plt.figure(figsize=(16, 12))
 sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap='viridis', linewidths=0.5)
-plt.title('Correlation Matrix of Carbon Content with Spectral Bands, Soil Nutrients, and Environmental Factors', fontsize=16)
+plt.title('Correlation Matrix of Carbon Content with Soil Nutrients, and Environmental Factors', fontsize=16)
 plt.xticks(ticks=range(len(selected_columns)), labels=[soil_nutrients.get(col, environment_info.get(col, col)) for col in selected_columns], rotation=90)
 plt.yticks(ticks=range(len(selected_columns)), labels=[soil_nutrients.get(col, environment_info.get(col, col)) for col in selected_columns], rotation=0)
 plt.tight_layout()

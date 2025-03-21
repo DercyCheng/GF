@@ -292,21 +292,20 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
     is_ml_model = model_type in ['RandomForest', 'SVR', 'XGBoost', 'LinearRegression', 'Ridge', 'Lasso', 'GradientBoosting']
     
     if is_ml_model:
-        # For ML models, just use predict method
+        # For ML models, just use predict method directly on numpy arrays
         y_pred = model.predict(X)
     else:
-        # For deep learning models, use the existing code
+        # For deep learning models, use the existing code with tensors
         model.eval()
         with torch.no_grad():
             X_tensor = torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device)
-            torch.tensor(y, dtype=torch.float32).to(device)
             y_pred = model(X_tensor).squeeze().cpu().numpy()
             
     r2 = r2_score(y, y_pred)
     rmse = np.sqrt(mean_squared_error(y, y_pred))
     rpd = np.std(y) / rmse
 
-    # Only plot for deep learning models, not for ML models
+    # Only plot for deep learning models with good performance
     if plot and 0.85 <= r2 < 0.99 and not is_ml_model:
         plot_results(y, y_pred, title, model_type, sanitize_filename(target_column))
         shap_analysis(model, X, feature_columns, sanitize_filename(target_column), model_type, attention_type, dataset_name)
@@ -315,31 +314,61 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
     return r2, rmse, rpd
 
 def train_and_evaluate(X, y, input_dim, model_type, attention_type, device, feature_columns, target_column, dataset_name, hyperparams):
-    model, best_val_loss = train_model(
-        X, y, input_dim=input_dim,
-        model_type=model_type,
-        attention_type=attention_type,
-        device=device,
-        dataset_name=dataset_name,
-        target_column=target_column,          # Added target_column
-        epochs=hyperparams['epochs'],        # Updated to use hyperparams
-        batch_size=hyperparams['batch_size'],
-        learning_rate=hyperparams['learning_rate'],
-        patience=hyperparams['patience']
-    )
+    # Check if it's a machine learning model
+    is_ml_model = model_type in ['RandomForest', 'SVR', 'XGBoost', 'LinearRegression', 'Ridge', 'Lasso', 'GradientBoosting']
+    
+    if is_ml_model:
+        # For ML models, create and train directly
+        model = initialize_model(model_type, input_dim, attention_type)
+        
+        # Apply hyperparameters if available
+        if model_type == 'RandomForest' and 'n_estimators' in hyperparams:
+            model.n_estimators = hyperparams.get('n_estimators', 100)
+            model.max_depth = hyperparams.get('max_depth', None)
+        elif model_type == 'SVR' and 'C' in hyperparams:
+            model.C = hyperparams.get('C', 1.0)
+            model.epsilon = hyperparams.get('epsilon', 0.1)
+        elif model_type == 'XGBoost' and 'n_estimators' in hyperparams:
+            model.n_estimators = hyperparams.get('n_estimators', 100)
+            model.learning_rate = hyperparams.get('learning_rate', 0.1)
+            
+        X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=42)
+        model.fit(X_train, y_train)
+        best_val_loss = mean_squared_error(y_val, model.predict(X_val))
+    else:
+        # For DL models, use the existing training function
+        model, best_val_loss = train_model(
+            X, y, input_dim=input_dim,
+            model_type=model_type,
+            attention_type=attention_type,
+            device=device,
+            dataset_name=dataset_name,
+            target_column=target_column,
+            epochs=hyperparams['epochs'],
+            batch_size=hyperparams['batch_size'],
+            learning_rate=hyperparams['learning_rate'],
+            patience=hyperparams['patience']
+        )
+        
+    # Split data for evaluation
     X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=42)
+    
+    # Evaluate on test data
     test_metrics = evaluate_model(
         model, X_val, y_val, feature_columns, target_column,
         model_type, attention_type, dataset_name,
         title=f"{dataset_name} - {target_column} - {attention_type} - {model_type}" if attention_type else f"{dataset_name} - {target_column} - {model_type}",
         plot=True
     )
+    
+    # Evaluate on training data
     train_metrics = evaluate_model(
         model, X_train, y_train, feature_columns, target_column, model_type,
         attention_type, dataset_name,
         title=f"{dataset_name} - {target_column} - Train - {attention_type} - {model_type}" if attention_type else f"{dataset_name} - {target_column} - Train - {model_type}",
         plot=False
     )
+    
     return train_metrics, test_metrics, best_val_loss
 
 def process_dataset(X, y_dict, feature_columns, dataset_name, device, model_types, results):
@@ -372,82 +401,154 @@ def objective(trial, X, y, model_type, feature_columns, target_column, dataset_n
     # Different hyperparameters for ML and DL models
     is_ml_model = model_type in ['RandomForest', 'SVR', 'XGBoost', 'LinearRegression', 'Ridge', 'Lasso', 'GradientBoosting']
     
+    X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=42)
+    
     if is_ml_model:
         # Define hyperparameters for ML models
         if model_type == 'RandomForest':
             n_estimators = trial.suggest_int('n_estimators', 10, 500)
-            max_depth = trial.suggest_int('max_depth', 5, 50)
-            hyperparams = {'n_estimators': n_estimators, 'max_depth': max_depth}
-            model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
+            max_depth = trial.suggest_int('max_depth', 5, 50, log=True)
+            min_samples_split = trial.suggest_int('min_samples_split', 2, 10)
+            model = RandomForestRegressor(
+                n_estimators=n_estimators, 
+                max_depth=max_depth,
+                min_samples_split=min_samples_split,
+                random_state=42
+            )
         elif model_type == 'SVR':
             C = trial.suggest_float('C', 0.1, 10.0, log=True)
-            epsilon = trial.suggest_float('epsilon', 0.01, 1.0, log=True)
-            hyperparams = {'C': C, 'epsilon': epsilon}
-            model = SVR(C=C, epsilon=epsilon, kernel='rbf')
+            epsilon = trial.suggest_float('epsilon', 0.01, 1.0)
+            gamma = trial.suggest_categorical('gamma', ['scale', 'auto'])
+            model = SVR(C=C, epsilon=epsilon, gamma=gamma)
         elif model_type == 'XGBoost':
             n_estimators = trial.suggest_int('n_estimators', 10, 500)
             learning_rate = trial.suggest_float('learning_rate', 0.01, 0.3, log=True)
-            hyperparams = {'n_estimators': n_estimators, 'learning_rate': learning_rate}
-            model = XGBRegressor(n_estimators=n_estimators, learning_rate=learning_rate, random_state=42)
-        else:  # Default for other ML models
-            hyperparams = {}
-            model = initialize_model(model_type, X.shape[1], None)
+            max_depth = trial.suggest_int('max_depth', 3, 10)
+            model = XGBRegressor(
+                n_estimators=n_estimators,
+                learning_rate=learning_rate,
+                max_depth=max_depth,
+                random_state=42
+            )
+        elif model_type == 'Ridge':
+            alpha = trial.suggest_float('alpha', 0.01, 10.0, log=True)
+            model = Ridge(alpha=alpha)
+        elif model_type == 'Lasso':
+            alpha = trial.suggest_float('alpha', 0.001, 1.0, log=True)
+            model = Lasso(alpha=alpha)
+        elif model_type == 'GradientBoosting':
+            n_estimators = trial.suggest_int('n_estimators', 10, 500)
+            learning_rate = trial.suggest_float('learning_rate', 0.01, 0.3, log=True)
+            max_depth = trial.suggest_int('max_depth', 3, 10)
+            model = GradientBoostingRegressor(
+                n_estimators=n_estimators,
+                learning_rate=learning_rate,
+                max_depth=max_depth,
+                random_state=42
+            )
+        else:  # LinearRegression
+            model = LinearRegression()
             
-        X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=42)
+        # Train and evaluate
         model.fit(X_train, y_train)
         y_pred = model.predict(X_val)
-        return mean_squared_error(y_val, y_pred)
+        val_loss = mean_squared_error(y_val, y_pred)
+        return val_loss
     else:
         # Original hyperparameters for DL models
         batch_size = trial.suggest_categorical('batch_size', [16, 32, 64])
-        learning_rate = trial.suggest_loguniform('learning_rate', 1e-5, 1e-2)
+        learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
         epochs = trial.suggest_int('epochs', 10, 200)
         patience = trial.suggest_int('patience', 10, 300)
+        
         hyperparams = {
             'batch_size': batch_size,
             'learning_rate': learning_rate,
             'epochs': epochs,
             'patience': patience
         }
-        X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=42)
-        test_metrics = evaluate_model(
-            train_model(
-                X_train, y_train, input_dim=X.shape[1],
-                model_type=model_type,
-                attention_type=None,
-                device=device,
-                dataset_name=dataset_name,
-                target_column=target_column,
-                epochs=hyperparams['epochs'],
-                batch_size=hyperparams['batch_size'],
-                learning_rate=hyperparams['learning_rate'],
-                patience=hyperparams['patience']
-            )[0],  # Get the best model from train_model
-            X_val, y_val,
-            feature_columns=feature_columns,
-            target_column=target_column,
+        
+        # Train model with the hyperparameters
+        model, val_loss = train_model(
+            X_train, y_train, 
+            input_dim=X.shape[1],
             model_type=model_type,
             attention_type=None,
+            device=device,
             dataset_name=dataset_name,
-            plot=False
+            target_column=target_column,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            patience=patience
         )
-        return test_metrics[1]  # Assuming val_loss is at index 1
+        
+        return val_loss  # Return the validation loss from training
 
 def main():
     results = []
     global device
-
+    
     for file_path, dataset_name in file_paths:
         X, y_dict, feature_columns = load_data(file_path, target_columns)
         X = preprocess_data(X)
-        pca = PCA(n_components=50)
-        X = pca.fit_transform(X)
+        
+        # Optionally apply dimensionality reduction for better ML performance
+        pca = PCA(n_components=min(50, X.shape[1]))
+        X_reduced = pca.fit_transform(X)
+        
+        for target_column, y in y_dict.items():
+            print(f"Processing {target_column} from {dataset_name}")
+            
+            # Run hyperparameter optimization for each model type and target
+            best_hyperparams = {}
+            for model_type in model_types:
+                print(f"Optimizing hyperparameters for {model_type} on {target_column}")
+                study = optuna.create_study(direction='minimize')
+                study.optimize(
+                    lambda trial: objective(trial, X_reduced, y, model_type, feature_columns, target_column, dataset_name), 
+                    n_trials=10
+                )
+                best_hyperparams[model_type] = study.best_params
+                print(f"Best params for {model_type}: {study.best_params}")
+            
+            # Train models with optimized hyperparameters
+            for model_type in model_types:
+                print(f"Training {model_type} with optimized hyperparameters")
+                
+                # Get the best hyperparameters or use defaults
+                hyperparams = best_hyperparams.get(model_type, {})
+                if model_type not in ['RandomForest', 'SVR', 'XGBoost', 'LinearRegression', 'Ridge', 'Lasso', 'GradientBoosting']:
+                    # Set default DL hyperparams if not present
+                    if 'epochs' not in hyperparams:
+                        hyperparams.update({
+                            'epochs': 100,
+                            'batch_size': 32,
+                            'learning_rate': 1e-3,
+                            'patience': 100
+                        })
+                
+                # Train and evaluate with best hyperparameters
+                train_metrics, test_metrics, _ = train_and_evaluate(
+                    X_reduced, y, input_dim=X_reduced.shape[1],
+                    model_type=model_type,
+                    attention_type=None,
+                    device=device,
+                    feature_columns=feature_columns,
+                    target_column=target_column,
+                    dataset_name=dataset_name,
+                    hyperparams=hyperparams
+                )
+                
+                results.append(
+                    (dataset_name, target_column, model_type, train_metrics, test_metrics)
+                )
+                
+                print(f"Dataset: {dataset_name}, Target: {target_column}, Model: {model_type}")
+                print(f"Train - R²: {train_metrics[0]:.4f}, RMSE: {train_metrics[1]:.4f}, RPD: {train_metrics[2]:.4f}")
+                print(f"Test - R²: {test_metrics[0]:.4f}, RMSE: {test_metrics[1]:.4f}, RPD: {test_metrics[2]:.4f}")
 
-        process_dataset(
-            X, y_dict, feature_columns, dataset_name,
-            device, model_types, results
-        )
-
+    # Output results to table
     headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
     table = [
         [dataset_name, target_column, model_type,
@@ -459,31 +560,20 @@ def main():
     print("\nResults Summary:")
     print(tabulate(table, headers=headers, tablefmt="grid"))
 
+    # Save results to Excel
     results_df = pd.DataFrame(table, columns=headers)
     results_df.to_excel(f'./output/results_summary.xlsx', index=False)
 
-    study = optuna.create_study(direction='minimize')
-    for model_type in model_types:
-        for target_column, y in y_dict.items():
-            study.optimize(lambda trial: objective(trial, X, y, model_type, feature_columns, target_column, dataset_name), n_trials=20)
-    best_params = study.best_params
-    print("Best hyperparameters found by Optuna:", best_params)
-
-    # Optionally retrain using best hyperparameters
-    final_model = train_model(
-        X, y,
-        input_dim=X.shape[1],
-        model_type='DCNN', 
-        attention_type=None,
-        device=device,
-        dataset_name=dataset_name,               # Added dataset_name
-        target_column=target_column,             # Added target_column
-        epochs=best_params['epochs'],
-        batch_size=best_params['batch_size'],
-        learning_rate=best_params['learning_rate'],
-        patience=best_params['patience']
-    )
-    torch.save(final_model.state_dict(), './output/model.pth')  # Save the best model to output folder
+    # Save the best model
+    best_row = max(table, key=lambda x: float(x[6]))  # Find row with highest Test R²
+    best_dataset = best_row[0]
+    best_target = best_row[1]
+    best_model_type = best_row[2]
+    
+    print(f"\nBest model: {best_model_type} for {best_target} on {best_dataset}")
+    
+    # We could retrain and save the best model here if needed
+    # For now we'll just note that the models are evaluated during the main loop
 
 if __name__ == "__main__":
     main()
