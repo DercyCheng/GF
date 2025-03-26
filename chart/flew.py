@@ -77,11 +77,11 @@ def create_dataset_flowchart():
                     edge_color="#555555", arrows=True,
                     arrowsize=15, arrowstyle='-|>')
     
-    ensure_dir("./output/flowcharts")
+    ensure_dir("./datasets/flowcharts")
     plt.title("Spectral Dataset Processing Methodology", fontweight='bold', pad=20)
     plt.tight_layout()
     plt.axis('off')
-    plt.savefig("./output/flowcharts/dataset_flowchart.png", bbox_inches="tight", dpi=300)
+    plt.savefig("./datasets/flowcharts/dataset_flowchart.png", bbox_inches="tight", dpi=300)
     plt.close()
 
 def create_train_flowchart():
@@ -139,11 +139,11 @@ def create_train_flowchart():
                      edge_color="#555555", arrows=True,
                      arrowsize=15, arrowstyle='-|>')
     
-    ensure_dir("./output/flowcharts")
+    ensure_dir("./datasets/flowcharts")
     plt.title("Soil Properties Prediction Methodology", fontweight='bold', pad=20)
     plt.tight_layout()
     plt.axis('off')
-    plt.savefig("./output/flowcharts/train_flowchart.png", bbox_inches="tight", dpi=300)
+    plt.savefig("./datasets/flowcharts/train_flowchart.png", bbox_inches="tight", dpi=300)
     plt.close()
 
 def create_dcnn_flowchart():
@@ -207,11 +207,11 @@ def create_dcnn_flowchart():
                      edge_color="#333333", arrows=True,
                      arrowsize=15, arrowstyle='-|>')
     
-    ensure_dir("./output/flowcharts")
+    ensure_dir("./datasets/flowcharts")
     plt.title("Attention-Enhanced DCNN Architecture for Spectral Analysis", fontweight='bold', pad=20)
     plt.tight_layout()
     plt.axis('off')
-    plt.savefig("./output/flowcharts/dcnn_flowchart.png", bbox_inches="tight", dpi=300)
+    plt.savefig("./datasets/flowcharts/dcnn_flowchart.png", bbox_inches="tight", dpi=300)
     plt.close()
 
 def create_utils_flowchart():
@@ -290,11 +290,11 @@ def create_utils_flowchart():
                            font_size=9,
                            font_weight="bold")
     
-    ensure_dir("./output/flowcharts")
+    ensure_dir("./datasets/flowcharts")
     plt.title("Utility Functions for Spectral Analysis Framework", fontweight='bold', pad=20)
     plt.tight_layout()
     plt.axis('off')
-    plt.savefig("./output/flowcharts/utils_flowchart.png", bbox_inches="tight", dpi=300)
+    plt.savefig("./datasets/flowcharts/utils_flowchart.png", bbox_inches="tight", dpi=300)
     plt.close()
 
 def create_integrated_flowchart():
@@ -381,11 +381,11 @@ def create_integrated_flowchart():
                            font_size=10,
                            font_weight="bold")
     
-    ensure_dir("./output/flowcharts")
+    ensure_dir("./datasets/flowcharts")
     plt.title("Integrated Framework for Soil Properties Prediction", fontweight='bold', pad=20)
     plt.tight_layout()
     plt.axis('off')
-    plt.savefig("./output/flowcharts/integrated_flowchart.png", bbox_inches="tight", dpi=300)
+    plt.savefig("./datasets/flowcharts/integrated_flowchart.png", bbox_inches="tight", dpi=300)
     plt.close()
 
 def create_comprehensive_workflow():
@@ -661,10 +661,10 @@ def create_comprehensive_workflow():
     legend = plt.legend(handles=legend_elements, loc='upper right', fontsize=14, 
                        frameon=True, framealpha=0.95, edgecolor='#707070')
     
-    ensure_dir("./output/flowcharts")
+    ensure_dir("./datasets/flowcharts")
     plt.axis('off')
     plt.subplots_adjust(left=0.02, right=0.98, top=0.95, bottom=0.03)
-    plt.savefig("./output/flowcharts/comprehensive_workflow.png", 
+    plt.savefig("./datasets/flowcharts/comprehensive_workflow.png",
               bbox_inches="tight", 
               dpi=300,
               facecolor='#FCFCFC')
@@ -672,7 +672,7 @@ def create_comprehensive_workflow():
 
 def main():
     """Generate all flowcharts with publication-quality styling"""
-    ensure_dir("./output/flowcharts")
+    ensure_dir("./datasets/flowcharts")
     
     # Uncomment individual flowcharts if needed separately
     # create_dataset_flowchart()
@@ -684,7 +684,7 @@ def main():
     # Generate the comprehensive workflow diagram
     create_comprehensive_workflow()
     
-    print("Comprehensive workflow diagram has been generated in ./output/flowcharts/")
+    print("Comprehensive workflow diagram has been generated in ./datasets/flowcharts/")
 
 if __name__ == "__main__":
     main()

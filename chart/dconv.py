@@ -87,17 +87,17 @@ def draw_dynamic_conv_diagram():
         ax.text(pos_x + width/2, pos_y + height/2 + 0.3, 
                f'$\\mathbf{{K}}_{{{dilation_rate}}}$', ha='center', fontsize=9, color=math_color)
         
-        # Draw output feature map - same height as filter
+        # Draw datasets feature map - same height as filter
         output_x = 5.5
         output_rect = patches.Rectangle((output_x, pos_y - height/2), width, height, 
                                       linewidth=2, edgecolor=color, facecolor=color, alpha=0.3)
         ax.add_patch(output_rect)
         
-        # Label for output - moved closer
+        # Label for datasets - moved closer
         ax.text(output_x + width/2, pos_y - height/2 - 0.3, 
                f'Output Y{dilation_rate}', ha='center', fontsize=9, fontweight='bold')
         
-        # Mathematical notation for output - moved closer
+        # Mathematical notation for datasets - moved closer
         ax.text(output_x + width/2, pos_y + height/2 + 0.3, 
                f'$\\mathbf{{Y}}_{{{dilation_rate}}}$', ha='center', fontsize=9, color=math_color)
         
@@ -106,7 +106,7 @@ def draw_dynamic_conv_diagram():
                 head_width=0.12, head_length=0.11, fc=arrow_color, ec=arrow_color, width=0.03, 
                 alpha=0.7, shape='right', length_includes_head=True)
         
-        # Modified arrow from filter to output
+        # Modified arrow from filter to datasets
         ax.arrow(pos_x + width + 0.05, pos_y, output_x - pos_x - width - 0.2, 0, 
                 head_width=0.10, head_length=0.10, fc=arrow_color, ec=arrow_color, width=0.03, alpha=0.7)
     
@@ -140,7 +140,7 @@ def draw_dynamic_conv_diagram():
     ax.arrow(8.6, middle_section_y, 0.3, 0, head_width=0.13, head_length=0.12, 
             fc=arrow_color, ec=arrow_color, width=0.04, alpha=0.7)
     
-    # Draw final output feature map with reduced height
+    # Draw final datasets feature map with reduced height
     output_x = 10.5
     output_rect = patches.Rectangle((output_x, middle_section_y - concat_height/2), 1, concat_height, 
                                    linewidth=2, edgecolor=output_color, facecolor=output_color, alpha=0.3)
@@ -150,7 +150,7 @@ def draw_dynamic_conv_diagram():
     ax.text(output_x + 0.5, middle_section_y + concat_height/2 + 0.3, r'$\mathbf{Y}$', 
            ha='center', fontsize=9, color=math_color, fontweight='bold')
     
-    # Arrow from conv to final output
+    # Arrow from conv to final datasets
     ax.arrow(10.1, middle_section_y, 0.3, 0, head_width=0.13, head_length=0.12, 
             fc=arrow_color, ec=arrow_color, width=0.04, alpha=0.7)
 
