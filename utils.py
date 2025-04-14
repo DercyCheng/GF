@@ -182,50 +182,34 @@ def plot_accuracy_and_loss(epochs, train_losses, val_losses, r2_scores, rmse_val
     save_path = f"output/{sanitize_filename(target_column)}/metrics/{save_title}_metrics.png"
     ensure_dir(os.path.dirname(save_path))
     
-    # Calculate average and std for each loss across folds
-    avg_train = np.mean(train_losses, axis=0)
-    std_train = np.std(train_losses, axis=0)
-    avg_val = np.mean(val_losses, axis=0)
-    std_val = np.std(val_losses, axis=0)
-    
-    # Assume r2_scores, rmse_values, and rpd_values are already averaged per epoch
-    avg_r2 = r2_scores
-    avg_rmse = rmse_values
-    avg_rpd = rpd_values
-    
-    # If you have standard deviations, pass them separately and uncomment the following lines
-    # std_r2 = np.std(r2_scores, axis=0)
-    # std_rmse = np.std(rmse_values, axis=0)
-    # std_rpd = np.std(rpd_values, axis=0)
-    
+    # Create figure
     fig, ax1 = plt.subplots(figsize=(14, 8))
     
-    color = 'tab:blue'
+    # Set up primary y-axis for R² and RPD
+    color = 'tab:red'
     ax1.set_xlabel('Epoch', fontsize=14)
-    ax1.set_ylabel('Loss', color=color, fontsize=14)
-    ax1.plot(epochs, avg_train, label='Average Training Loss', color=color, linestyle='-')
-    ax1.fill_between(epochs, avg_train - std_train, avg_train + std_train, color=color, alpha=0.2)
-    ax1.plot(epochs, avg_val, label='Average Validation Loss', color=color, linestyle='--')
-    ax1.fill_between(epochs, avg_val - std_val, avg_val + std_val, color=color, alpha=0.2)
+    ax1.set_ylabel('R² / RPD', color=color, fontsize=14)
+    ax1.plot(epochs, r2_scores, label='R²', color='tab:red', linestyle='-')
+    ax1.plot(epochs, rpd_values, label='RPD', color='tab:purple', linestyle='-.')
     ax1.tick_params(axis='y', labelcolor=color, labelsize=12)
     
+    # Create secondary y-axis for RMSE
     ax2 = ax1.twinx()
-    
-    color = 'tab:red'
-    ax2.set_ylabel('Metrics', color=color, fontsize=14)
-    ax2.plot(epochs, avg_r2, label='Average R²', color='tab:red', linestyle='-')
-    # ax2.fill_between(epochs, avg_r2 - std_r2, avg_r2 + std_r2, color='tab:red', alpha=0.2)  # Uncomment if std_r2 is available
-    ax2.plot(epochs, avg_rmse, label='Average RMSE', color='tab:green', linestyle='--')
-    # ax2.fill_between(epochs, avg_rmse - std_rmse, avg_rmse + std_rmse, color='tab:green', alpha=0.2)  # Uncomment if std_rmse is available
-    ax2.plot(epochs, avg_rpd, label='Average RPD', color='tab:purple', linestyle='-.')
-    # ax2.fill_between(epochs, avg_rpd - std_rpd, avg_rpd + std_rpd, color='tab:purple', alpha=0.2)  # Uncomment if std_rpd is available
+    color = 'tab:green'
+    ax2.set_ylabel('RMSE', color=color, fontsize=14)
+    ax2.plot(epochs, rmse_values, label='RMSE', color=color, linestyle='--')
     ax2.tick_params(axis='y', labelcolor=color, labelsize=12)
     
     plt.title(title, fontsize=16)
-    fig.legend(loc='upper right', bbox_to_anchor=(1,1), bbox_transform=ax1.transAxes, fontsize=12)
+    
+    # Combine legends from both axes
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=12)
+    
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(save_path)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 
 def plot_spectral_curves(X, feature_names, target_column, model_type, dataset_name):

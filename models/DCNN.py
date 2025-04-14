@@ -139,6 +139,19 @@ class DCNN(nn.Module):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
     
+    def _get_attention_block(self, attention_type, channels):
+        """创建指定类型的注意力模块"""
+        if attention_type is None:
+            return None
+        elif attention_type.lower() == 'SE':
+            return SEBlock(channels)
+        elif attention_type.lower() == 'ECA':
+            return ECABlock(channels)
+        elif attention_type.lower() == 'CBAM':
+            return CBAMBlock(channels)
+        else:
+            raise ValueError(f"不支持的注意力机制类型: {attention_type}")
+    
     def forward(self, x):
         x = self.conv1(x)
         
@@ -167,7 +180,17 @@ class DCNN(nn.Module):
         if not self.attention_blocks:
             return None
         with torch.no_grad():
-            # 获取最后一个注意力块的权重
-            for layer in self.backbone[:-1]:
-                x = layer(x)
-            return self.attention_blocks[-1].get_attention_weights(x)
+            # 传播到每个注意力块
+            x = self.conv1(x)
+            attention_weights = []
+            
+            for i, (res_block, attn) in enumerate(zip(self.backbone, self.attention_blocks)):
+                x = res_block(x)
+                if hasattr(attn, 'get_attention_weights'):
+                    weights = attn.get_attention_weights(x)
+                    attention_weights.append(weights)
+                else:
+                    # 对于没有实现get_attention_weights方法的注意力块
+                    attention_weights.append(None)
+                    
+            return attention_weights

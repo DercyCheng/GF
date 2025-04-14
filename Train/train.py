@@ -17,11 +17,16 @@ from sklearn.linear_model import ElasticNet, Ridge
 # Add PLSR
 from sklearn.cross_decomposition import PLSRegression
 
+# Import preprocessing tools
+from scipy.signal import savgol_filter
+import pywt
+from scipy import stats
+from sklearn.preprocessing import StandardScaler
+
 # Import models
 from models.DCNN import DCNN
 from models.ResNet18 import ResNet18
 from models.VGG7 import VGG7
-# from models.MultiModalNet import MultiModalNet
 
 # Import utility functions
 from utils import (plot_results, shap_analysis, lime_analysis, set_seed, augment_data, load_data, preprocess_data,
@@ -33,23 +38,8 @@ plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'Microsoft YaHe
 plt.rcParams['axes.unicode_minus'] = False
 
 file_paths = [
-    ("../datasets/data_spectral_bands_dwt.xlsx", "SBDWT"),
-    ("../datasets/data_spectral_bands_msc.xlsx", "SBMSC"),
-    ("../datasets/data_spectral_bands_msc_dwt.xlsx", "SBMSC-DWT"),
-    ("../datasets/data_spectral_bands_sgd_dr.xlsx", "SBSD"),
-    ("../datasets/data_spectral_bands_snv.xlsx", "SBSNV"),
     ("../datasets/data_soil_nutrients_spectral_bands.xlsx", "SNSB"),
-    ("../datasets/data_soil_nutrients_spectral_bands_dwt.xlsx", "SNSBDWT"),
-    ("../datasets/data_soil_nutrients_spectral_bands_msc.xlsx", "SNSBMSC"),
-    ("../datasets/data_soil_nutrients_spectral_bands_msc_dwt.xlsx", "SNSBMSC-DWT"),
-    ("../datasets/data_soil_nutrients_spectral_bands_sgd_dr.xlsx", "SNSBSD"),
-    ("../datasets/data_soil_nutrients_spectral_bands_snv.xlsx", "SNSBSNV"),
     ("../datasets/data_soil_nutrients_spectral_bands_environment.xlsx", "SNSBE"),
-    ("../datasets/data_soil_nutrients_spectral_bands_environment_dwt.xlsx", "SNSBEDWT"),
-    ("../datasets/data_soil_nutrients_spectral_bands_environment_msc.xlsx", "SNSBEMSC"),
-    ("../datasets/data_soil_nutrients_spectral_bands_environment_msc_dwt.xlsx", "SNSBEMSC-DWT"),
-    ("../datasets/data_soil_nutrients_spectral_bands_environment_sgd_dr.xlsx", "SNSBESD"),
-    ("../datasets/data_soil_nutrients_spectral_bands_environment_snv.xlsx", "SNSBESNV"),
 ]
 
 target_columns = ["SOC", "EOC", "WOC", "TC", "OM"]
@@ -60,7 +50,227 @@ model_types = [
     'RandomForest', 'GradientBoosting', 'SVR', 'ElasticNet', 'Ridge', 'PLSR'  # Add PLSR model
 ]
 
+# Define preprocessing combinations
+denoising_methods = ['RAW', 'SG', 'DWT', 'MSC']
+math_transforms = ['NONE', 'FIRST_DERIVATIVE', 'SECOND_DERIVATIVE', 'DETREND', 'NORMAL']
+
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+
+# Define preprocessing functions
+def apply_sg(X, window_length=15, polyorder=2):
+    """Apply Savitzky-Golay filter for smoothing"""
+    # Ensure window_length is odd and smaller than data length
+    if window_length >= X.shape[1]:
+        window_length = min(X.shape[1] - 1 if X.shape[1] % 2 == 0 else X.shape[1] - 2, 15)
+    if window_length % 2 == 0:
+        window_length -= 1
+    window_length = max(window_length, 5)  # Minimum window length
+    polyorder = min(polyorder, window_length - 1)  # polyorder must be less than window_length
+    
+    result = np.apply_along_axis(lambda x: savgol_filter(x, window_length, polyorder), 1, X)
+    # Replace any NaN values with original values
+    nan_mask = np.isnan(result)
+    if np.any(nan_mask):
+        result[nan_mask] = X[nan_mask]
+    return result
+
+def apply_dwt(X, wavelet='db4', level=2):
+    """Apply Discrete Wavelet Transform denoising"""
+    denoised = np.zeros_like(X)
+    
+    # Calculate maximum decomposition level based on data length
+    max_level = pywt.dwt_max_level(X.shape[1], pywt.Wavelet(wavelet).dec_len)
+    level = min(level, max_level)
+    
+    for i in range(X.shape[0]):
+        try:
+            # Decompose
+            coeffs = pywt.wavedec(X[i], wavelet, level=level)
+            # Threshold detail coefficients (keep approximation coefficients as is)
+            threshold = np.std(X[i]) * np.sqrt(2 * np.log(len(X[i])))
+            for j in range(1, len(coeffs)):
+                coeffs[j] = pywt.threshold(coeffs[j], threshold, mode='soft')
+            # Reconstruct
+            denoised[i] = pywt.waverec(coeffs, wavelet)
+            
+            # Handle potential length mismatch
+            if len(denoised[i]) != len(X[i]):
+                denoised[i] = denoised[i][:len(X[i])]
+        except Exception as e:
+            print(f"Warning in DWT processing: {e}")
+            denoised[i] = X[i]  # Use original data if error
+    
+    # Replace NaN values with original values
+    nan_mask = np.isnan(denoised)
+    if np.any(nan_mask):
+        denoised[nan_mask] = X[nan_mask]
+    return denoised
+
+def apply_msc(X):
+    """Apply Multiplicative Scatter Correction"""
+    # Calculate mean spectrum
+    mean_spectrum = np.mean(X, axis=0)
+    n_samples, n_features = X.shape
+    corrected = np.zeros_like(X)
+    
+    for i in range(n_samples):
+        try:
+            # Linear regression of spectrum against mean spectrum
+            slope, intercept, _, _, _ = stats.linregress(mean_spectrum, X[i])
+            # Apply correction
+            corrected[i] = (X[i] - intercept) / slope
+        except Exception as e:
+            print(f"Warning in MSC processing for sample {i}: {e}")
+            corrected[i] = X[i]  # Keep original if error
+    
+    # Replace NaN or inf values with original values
+    invalid_mask = np.isnan(corrected) | np.isinf(corrected)
+    if np.any(invalid_mask):
+        corrected[invalid_mask] = X[invalid_mask]
+    return corrected
+
+def apply_first_derivative(X):
+    """Apply first derivative"""
+    # Calculate derivative
+    deriv = np.diff(X, n=1, axis=1)
+    
+    # Pad to keep original dimensions - use edge values for padding
+    padding = np.zeros((X.shape[0], 1))
+    for i in range(X.shape[0]):
+        padding[i, 0] = deriv[i, 0]  # Repeat first derivative value
+    
+    result = np.hstack((deriv, padding))
+    
+    # Replace any NaN values
+    nan_mask = np.isnan(result)
+    if np.any(nan_mask):
+        # Replace NaNs with zeros
+        result[nan_mask] = 0
+    return result
+
+def apply_second_derivative(X):
+    """Apply second derivative"""
+    # Calculate derivative
+    deriv = np.diff(X, n=2, axis=1)
+    
+    # Pad to keep original dimensions - use edge values for padding
+    padding = np.zeros((X.shape[0], 2))
+    for i in range(X.shape[0]):
+        padding[i, 0] = deriv[i, 0]  # Repeat first derivative value
+        padding[i, 1] = deriv[i, 0]  # Repeat first derivative value
+    
+    result = np.hstack((deriv, padding))
+    
+    # Replace any NaN values
+    nan_mask = np.isnan(result)
+    if np.any(nan_mask):
+        # Replace NaNs with zeros
+        result[nan_mask] = 0
+    return result
+
+def apply_detrend(X):
+    """Remove linear trend from data"""
+    detrended = np.zeros_like(X)
+    for i in range(X.shape[0]):
+        try:
+            detrended[i] = stats.detrend(X[i])
+        except Exception as e:
+            print(f"Warning in detrending sample {i}: {e}")
+            detrended[i] = X[i]  # Use original if error
+    
+    # Replace any NaN values
+    nan_mask = np.isnan(detrended)
+    if np.any(nan_mask):
+        detrended[nan_mask] = X[nan_mask]
+    return detrended
+
+def apply_normalization(X):
+    """Apply normalization to make data follow normal distribution"""
+    # Handle NaN or Inf values first
+    X_clean = np.copy(X)
+    invalid_mask = np.isnan(X_clean) | np.isinf(X_clean)
+    if np.any(invalid_mask):
+        # Replace with column means
+        col_means = np.nanmean(X_clean, axis=0)
+        for i in range(X_clean.shape[1]):
+            col_invalid = invalid_mask[:, i]
+            if np.any(col_invalid):
+                X_clean[col_invalid, i] = col_means[i]
+    
+    try:
+        scaler = StandardScaler()
+        result = scaler.fit_transform(X_clean)
+        
+        # Check for any remaining NaNs or Infs
+        remaining_invalid = np.isnan(result) | np.isinf(result)
+        if np.any(remaining_invalid):
+            result[remaining_invalid] = 0  # Replace with zeros
+    except Exception as e:
+        print(f"Warning in normalization: {e}")
+        # Fall back to simple normalization if StandardScaler fails
+        result = (X_clean - np.nanmean(X_clean, axis=0)) / (np.nanstd(X_clean, axis=0) + 1e-10)
+        # Replace any remaining NaNs or Infs
+        remaining_invalid = np.isnan(result) | np.isinf(result)
+        if np.any(remaining_invalid):
+            result[remaining_invalid] = 0
+    
+    return result
+
+def apply_preprocessing(X, denoising, transform):
+    """Apply preprocessing combinations with NaN handling"""
+    # Make a copy to avoid modifying original
+    X = np.copy(X)
+    
+    # Handle NaNs in input data
+    nan_mask = np.isnan(X)
+    if np.any(nan_mask):
+        print(f"Warning: Input data contains {np.sum(nan_mask)} NaN values. Replacing with column means.")
+        col_means = np.nanmean(X, axis=0)
+        for i in range(X.shape[1]):
+            col_nan = nan_mask[:, i]
+            if np.any(col_nan):
+                X[col_nan, i] = col_means[i]
+    
+    # Step 1: Apply denoising
+    if denoising == 'RAW':
+        X_denoised = X.copy()  # No denoising
+    elif denoising == 'SG':
+        X_denoised = apply_sg(X)
+    elif denoising == 'DWT':
+        X_denoised = apply_dwt(X)
+    elif denoising == 'MSC':
+        X_denoised = apply_msc(X)
+    else:
+        raise ValueError(f"Unknown denoising method: {denoising}")
+    
+    # Check for NaNs after denoising
+    nan_count = np.sum(np.isnan(X_denoised))
+    if nan_count > 0:
+        print(f"Warning: Denoising produced {nan_count} NaN values. Fixing...")
+        nan_mask = np.isnan(X_denoised)
+        X_denoised[nan_mask] = X[nan_mask]  # Replace NaNs with original values
+    
+    # Step 2: Apply mathematical transform
+    if transform == 'NONE':
+        X_transformed = X_denoised  # No transform
+    elif transform == 'FIRST_DERIVATIVE':
+        X_transformed = apply_first_derivative(X_denoised)
+    elif transform == 'SECOND_DERIVATIVE':
+        X_transformed = apply_second_derivative(X_denoised)
+    elif transform == 'DETREND':
+        X_transformed = apply_detrend(X_denoised)
+    elif transform == 'NORMAL':
+        X_transformed = apply_normalization(X_denoised)
+    else:
+        raise ValueError(f"Unknown transform method: {transform}")
+    
+    # Final check for NaNs or Infs
+    invalid_mask = np.isnan(X_transformed) | np.isinf(X_transformed)
+    if np.any(invalid_mask):
+        print(f"Warning: Final preprocessing result contains {np.sum(invalid_mask)} invalid values. Replacing with zeros.")
+        X_transformed[invalid_mask] = 0
+    
+    return X_transformed
 
 def initialize_model(model_type, input_dim, attention_type=None):
     # Parse attention type from model name if it contains a hyphen
@@ -80,11 +290,6 @@ def initialize_model(model_type, input_dim, attention_type=None):
         raise ValueError(f"Unsupported model type: {base_model}")
     elif base_model in ['DCNN']:
         return model_classes[base_model](input_dim, attention_type=attention_type)
-    # elif 'MultiModal' in model_type:
-    #     spectral_dim = input_dim
-    #     env_dim = len(environment_info)
-    #     nutrient_dim = len(soil_nutrients)
-    #     return MultiModalNet(spectral_dim, env_dim, nutrient_dim, attention_type)
     else:
         return model_classes[base_model](input_dim)
 
@@ -332,9 +537,19 @@ def train_and_evaluate_ml_model(model, X, y, feature_columns, target_column, dat
     # But keeping feature importance analysis for records (just not plotting)
     return (train_r2, train_rmse, train_rpd), (val_r2, val_rmse, val_rpd)
 
-def process_dataset(X, y_dict, feature_columns, dataset_name, device, model_types, results):
+def process_dataset(X, y_dict, feature_columns, dataset_name, device, model_types, results, denoising=None, transform=None):
+    """Process dataset with specific preprocessing combination"""
+    
+    # Apply preprocessing if specified
+    if denoising and transform:
+        X_processed = apply_preprocessing(X, denoising, transform)
+        preprocessing_name = f"{denoising}_{transform}"
+    else:
+        X_processed = X
+        preprocessing_name = "ORIGINAL"
+    
     for target_column, y in y_dict.items():
-        print(f"Processing {target_column} from {dataset_name}")
+        print(f"Processing {target_column} from {dataset_name} with {preprocessing_name} preprocessing")
         for model_type in model_types:
             print(f"Training {model_type}")
             
@@ -351,22 +566,21 @@ def process_dataset(X, y_dict, feature_columns, dataset_name, device, model_type
                 elif model_type == 'Ridge':
                     model = Ridge(alpha=1.0, random_state=42)
                 elif model_type == 'PLSR':
-                    # Start with n_components = 10, will be optimized with Optuna
                     model = PLSRegression(n_components=10, scale=True)
                     
                 train_metrics, test_metrics = train_and_evaluate_ml_model(
-                    model, X, y, feature_columns, target_column, dataset_name, model_type, plot=False  # Set plot=False for ML models
+                    model, X_processed, y, feature_columns, target_column, dataset_name, model_type, plot=False
                 )
             else:
                 # Deep learning models
                 hyperparams = {
-                    'epochs': 150,  # Increased from 100
-                    'batch_size': 16,  # Decreased from 32 for better fitting
-                    'learning_rate': 2e-3,  # Increased from 1e-3
-                    'patience': 150  # Increased from 100
+                    'epochs': 150,
+                    'batch_size': 16,
+                    'learning_rate': 2e-3,
+                    'patience': 150
                 }
                 train_metrics, test_metrics, _ = train_and_evaluate(
-                    X, y, input_dim=X.shape[1],
+                    X_processed, y, input_dim=X_processed.shape[1],
                     model_type=model_type,
                     attention_type=None,
                     device=device,
@@ -375,11 +589,13 @@ def process_dataset(X, y_dict, feature_columns, dataset_name, device, model_type
                     dataset_name=dataset_name,
                     hyperparams=hyperparams
                 )
-                
+            
+            # Store results with preprocessing info
             results.append(
-                (dataset_name, target_column, model_type, train_metrics, test_metrics)
+                (dataset_name, target_column, model_type, preprocessing_name, 
+                 train_metrics, test_metrics)
             )
-            print(f"Dataset: {dataset_name}, Target: {target_column}, Model: {model_type}, "
+            print(f"Dataset: {dataset_name}, Preprocessing: {preprocessing_name}, Target: {target_column}, Model: {model_type}, "
                   f"Train R²: {train_metrics[0]:.4f}, Train RMSE: {train_metrics[1]:.4f}, "
                   f"Val R²: {test_metrics[0]:.4f}, Val RMSE: {test_metrics[1]:.4f}")
 
@@ -469,93 +685,87 @@ def main():
 
     for file_path, dataset_name in file_paths:
         X, y_dict, feature_columns = load_data(file_path, target_columns)
-        X = preprocess_data(X)
-        pca = PCA(n_components=50)
-        X = pca.fit_transform(X)
+        
+        # Loop through all preprocessing combinations
+        for denoising in denoising_methods:
+            for transform in math_transforms:
+                print(f"\nApplying preprocessing: {denoising} + {transform}")
+                
+                # Apply preprocessing combination
+                X_processed = apply_preprocessing(X, denoising, transform)
+                
+                # Check for NaNs before PCA
+                nan_count = np.sum(np.isnan(X_processed))
+                if nan_count > 0:
+                    print(f"Warning: Data contains {nan_count} NaN values before PCA. Replacing with zeros.")
+                    X_processed[np.isnan(X_processed)] = 0
+                
+                # Apply PCA for dimensionality reduction
+                try:
+                    pca = PCA(n_components=min(50, X_processed.shape[1]))
+                    X_processed = pca.fit_transform(X_processed)
+                    print(f"Applied PCA, retained {pca.n_components_} components explaining {pca.explained_variance_ratio_.sum()*100:.2f}% of variance")
+                except ValueError as e:
+                    print(f"PCA failed: {e}")
+                    print("Using original processed data without PCA")
+                    # If PCA fails, normalize the data to prevent model issues
+                    X_processed = (X_processed - np.mean(X_processed, axis=0)) / (np.std(X_processed, axis=0) + 1e-10)
+                    X_processed[np.isnan(X_processed) | np.isinf(X_processed)] = 0
+                
+                # Process dataset with this preprocessing combination
+                process_dataset(
+                    X_processed, y_dict, feature_columns, 
+                    f"{dataset_name}_{denoising}_{transform}",  # Modified dataset name to include preprocessing
+                    device, model_types, results, denoising, transform
+                )
 
-        process_dataset(
-            X, y_dict, feature_columns, dataset_name,
-            device, model_types, results
-        )
-
-    headers = ["Dataset", "Target", "Model", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
+    # Modified headers to include preprocessing info
+    headers = ["Dataset", "Target", "Model", "Preprocessing", "Train R²", "Train RMSE", "Train RPD", "Test R²", "Test RMSE", "Test RPD"]
     table = [
-        [dataset_name, target_column, model_type,
+        [dataset_name, target_column, model_type, preprocessing_name,
          f"{train_metrics[0]:.4f}", f"{train_metrics[1]:.4f}", f"{train_metrics[2]:.4f}", 
          f"{test_metrics[0]:.4f}", f"{test_metrics[1]:.4f}", f"{test_metrics[2]:.4f}"]
-        for dataset_name, target_column, model_type, train_metrics, test_metrics in results
+        for dataset_name, target_column, model_type, preprocessing_name, train_metrics, test_metrics in results
     ]
 
     print("\nResults Summary:")
     print(tabulate(table, headers=headers, tablefmt="grid"))
 
+    # Save results to Excel, including preprocessing information
     results_df = pd.DataFrame(table, columns=headers)
-    results_df.to_excel(f'./output/results_summary.xlsx', index=False)
+    results_df.to_excel(f'./output/results_summary_with_preprocessing.xlsx', index=False)
+    
+    # Find best preprocessing combination for each model and target
+    best_results = {}
+    for dataset_name, target_column, model_type, preprocessing_name, _, test_metrics in results:
+        key = (dataset_name.split('_')[0], target_column, model_type)
+        if key not in best_results or test_metrics[0] > best_results[key][1][0]:  # Compare by R²
+            best_results[key] = (preprocessing_name, test_metrics)
+    
+    # Create and save summary of best preprocessing methods
+    best_table = [
+        [dataset, target, model, preproc, f"{metrics[0]:.4f}", f"{metrics[1]:.4f}", f"{metrics[2]:.4f}"]
+        for (dataset, target, model), (preproc, metrics) in best_results.items()
+    ]
+    best_headers = ["Dataset", "Target", "Model", "Best Preprocessing", "R²", "RMSE", "RPD"]
+    best_df = pd.DataFrame(best_table, columns=best_headers)
+    best_df.to_excel('./output/best_preprocessing_results.xlsx', index=False)
+    
+    print("\nBest Preprocessing Results:")
+    print(tabulate(best_table, headers=best_headers, tablefmt="grid"))
 
+    # Optional: Run Optuna optimization on the best preprocessing combination
     study = optuna.create_study(direction='minimize')
+    best_preprocessing = list(best_results.values())[0][0]  # Get first preprocessing method
+    denoising, transform = best_preprocessing.split('_')
+    X_best = apply_preprocessing(X, denoising, transform)
+    
     for model_type in model_types:
         for target_column, y in y_dict.items():
-            study.optimize(lambda trial: objective(trial, X, y, model_type, feature_columns, target_column, dataset_name), n_trials=20)
+            study.optimize(lambda trial: objective(trial, X_best, y, model_type, feature_columns, target_column, dataset_name), n_trials=20)
+    
     best_params = study.best_params
     print("Best hyperparameters found by Optuna:", best_params)
-
-    # Save final model - different handling based on model type
-    if 'DCNN' in best_params:  # Assume the best model is a DL model if it has DCNN in params
-        final_model = train_model(
-            X, y,
-            input_dim=X.shape[1],
-            model_type='DCNN', 
-            attention_type=None,
-            device=device,
-            dataset_name=dataset_name,               # Added dataset_name
-            target_column=target_column,             # Added target_column
-            epochs=best_params['epochs'],
-            batch_size=best_params['batch_size'],
-            learning_rate=best_params['learning_rate'],
-            patience=best_params['patience']
-        )[0]
-        # torch.save(final_model.state_dict(), './output/model.pth')
-    else:
-        # For ML models, use joblib for saving
-        import joblib
-        if 'n_estimators' in best_params:
-            if 'learning_rate' in best_params:  # GradientBoosting
-                final_model = GradientBoostingRegressor(
-                    n_estimators=best_params['n_estimators'],
-                    learning_rate=best_params['learning_rate'],
-                    random_state=42
-                )
-            else:  # RandomForest
-                final_model = RandomForestRegressor(
-                    n_estimators=best_params['n_estimators'],
-                    max_depth=best_params.get('max_depth', None),
-                    random_state=42
-                )
-        elif 'C' in best_params:  # SVR
-            final_model = SVR(
-                kernel='rbf', 
-                C=best_params['C'], 
-                epsilon=best_params['epsilon']
-            )
-        elif 'alpha' in best_params:
-            if 'l1_ratio' in best_params:  # ElasticNet
-                final_model = ElasticNet(
-                    alpha=best_params['alpha'],
-                    l1_ratio=best_params['l1_ratio'],
-                    random_state=42
-                )
-            else:  # Ridge
-                final_model = Ridge(
-                    alpha=best_params['alpha'],
-                    random_state=42
-                )
-        elif 'n_components' in best_params:  # PLSR
-            final_model = PLSRegression(
-                n_components=best_params['n_components'],
-                scale=True
-            )
-        final_model.fit(X, y)
-        # joblib.dump(final_model, './output/ml_model.joblib')
 
 if __name__ == "__main__":
     main()
