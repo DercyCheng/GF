@@ -52,15 +52,18 @@ model_types = [
 
 # Define preprocessing combinations
 denoising_methods = ['RAW', 'SG', 'DWT', 'MSC']
-math_transforms = ['NONE', 'FIRST_DERIVATIVE', 'SECOND_DERIVATIVE', 'DETREND', 'NORMAL']
+math_transforms = ['NONE', 'FIRST_DERIVATIVE', 'SECOND_DERIVATIVE', 'DETREND']
 
 device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+
+# Generate spectral bands from 350 to 2500nm
+spectral_bands = [f'{i}' for i in range(350, 2501)]
 
 # Define preprocessing functions
 def apply_sg(X, window_length=15, polyorder=2):
     """Apply Savitzky-Golay filter for smoothing"""
     # Ensure window_length is odd and smaller than data length
-    if window_length >= X.shape[1]:
+    if (window_length >= X.shape[1]):
         window_length = min(X.shape[1] - 1 if X.shape[1] % 2 == 0 else X.shape[1] - 2, 15)
     if window_length % 2 == 0:
         window_length -= 1
@@ -308,9 +311,9 @@ def train_one_epoch(model, train_loader, optimizer, criterion, device, model_typ
         X_batch, y_batch = X_batch.to(device), y_batch.to(device)
         optimizer.zero_grad()
         
-        # Remove dropout during training to increase model capacity
+        # Enable dropout during training (it should be active during training)
         if hasattr(model, 'apply_dropout'):
-            model.apply_dropout(False)
+            model.apply_dropout(True)
             
         outputs = model(X_batch).squeeze()
         loss = criterion(outputs, y_batch)
@@ -444,10 +447,12 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
     model.eval()
     with torch.no_grad():
         if hasattr(model, 'apply_dropout'):
-            model.apply_dropout(False)
+            model.apply_dropout(False)  # Disable dropout for evaluation
         X_tensor = torch.tensor(X, dtype=torch.float32).unsqueeze(1).to(device)
-        torch.tensor(y, dtype=torch.float32).to(device)
+        y_tensor = torch.tensor(y, dtype=torch.float32).to(device)
         y_pred = model(X_tensor).squeeze().cpu().numpy()
+    
+    # Calculate metrics properly
     r2 = r2_score(y, y_pred)
     rmse = np.sqrt(mean_squared_error(y, y_pred))
     rpd = np.std(y) / rmse
@@ -470,31 +475,39 @@ def evaluate_model(model, X, y, feature_columns, target_column, model_type, atte
     return r2, rmse, rpd
 
 def train_and_evaluate(X, y, input_dim, model_type, attention_type, device, feature_columns, target_column, dataset_name, hyperparams):
+    # First, split the data to ensure proper training/testing comparison
+    X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=42)
+    
+    # Train the model
     model, best_val_loss = train_model(
-        X, y, input_dim=input_dim,
+        X_train, y_train, input_dim=input_dim,
         model_type=model_type,
         attention_type=attention_type,
         device=device,
         dataset_name=dataset_name,
-        target_column=target_column,          # Added target_column
-        epochs=hyperparams['epochs'],        # Updated to use hyperparams
+        target_column=target_column,
+        epochs=hyperparams['epochs'],
         batch_size=hyperparams['batch_size'],
         learning_rate=hyperparams['learning_rate'],
         patience=hyperparams['patience']
     )
-    X_train, X_val, y_train, y_val = train_test_split(X, y, train_size=0.8, random_state=42)
-    test_metrics = evaluate_model(
-        model, X_val, y_val, feature_columns, target_column,
-        model_type, attention_type, dataset_name,
-        title=f"{dataset_name} - {target_column} - {attention_type} - {model_type}" if attention_type else f"{dataset_name} - {target_column} - {model_type}",
-        plot=True
-    )
+    
+    # Calculate metrics on training set with dropout disabled
     train_metrics = evaluate_model(
         model, X_train, y_train, feature_columns, target_column, model_type,
         attention_type, dataset_name,
-        title=f"{dataset_name} - {target_column} - Train - {attention_type} - {model_type}" if attention_type else f"{dataset_name} - {target_column} - Train - {model_type}",
+        title=f"{dataset_name} - {target_column} - Train - {model_type}",
         plot=False
     )
+    
+    # Calculate metrics on validation set
+    test_metrics = evaluate_model(
+        model, X_val, y_val, feature_columns, target_column,
+        model_type, attention_type, dataset_name,
+        title=f"{dataset_name} - {target_column} - {model_type}",
+        plot=True
+    )
+    
     return train_metrics, test_metrics, best_val_loss
 
 def train_and_evaluate_ml_model(model, X, y, feature_columns, target_column, dataset_name, model_type, plot=False):
@@ -679,19 +692,61 @@ def objective(trial, X, y, model_type, feature_columns, target_column, dataset_n
         
     return test_metrics[1]  # RMSE - lower is better
 
+def load_data_spectral(file_path, target_columns):
+    """
+    Load data from Excel file, extracting only spectral bands (350-2500nm) and target columns
+    
+    Args:
+        file_path: Path to the Excel file
+        target_columns: List of target column names
+        
+    Returns:
+        X: Array containing spectral bands data (350-2500nm only)
+        y_dict: Dictionary with target column names as keys and target values as numpy arrays
+        feature_columns: List of spectral band column names that were found in the data
+    """
+    df = pd.read_excel(file_path)
+    
+    # Identify spectral bands in the range 350-2500nm
+    spectral_bands = [f'{i}' for i in range(350, 2501)]
+    existing_bands = [band for band in spectral_bands if band in df.columns]
+    
+    if len(existing_bands) < len(spectral_bands):
+        print(f"Warning: Found only {len(existing_bands)} out of {len(spectral_bands)} spectral bands in the data.")
+    
+    if not existing_bands:
+        raise ValueError("No spectral bands in the range 350-2500nm found in the dataset!")
+    
+    # Extract features (spectral bands only)
+    X = df[existing_bands].values
+    
+    # Extract targets
+    y_dict = {}
+    for target in target_columns:
+        if target in df.columns:
+            y_dict[target] = df[target].values
+        else:
+            print(f"Warning: Target column '{target}' not found in the dataset.")
+    
+    return X, y_dict, existing_bands
+
 def main():
     results = []
     global device
 
     for file_path, dataset_name in file_paths:
-        X, y_dict, feature_columns = load_data(file_path, target_columns)
+        # Use the new function to load only spectral bands (350-2500nm)
+        X, y_dict, feature_columns = load_data_spectral(file_path, target_columns)
+        
+        print(f"Loaded {len(feature_columns)} spectral bands from {dataset_name}")
+        print(f"Wavelength range: {feature_columns[0]}nm to {feature_columns[-1]}nm")
         
         # Loop through all preprocessing combinations
         for denoising in denoising_methods:
             for transform in math_transforms:
                 print(f"\nApplying preprocessing: {denoising} + {transform}")
                 
-                # Apply preprocessing combination
+                # Apply preprocessing only to spectral bands
                 X_processed = apply_preprocessing(X, denoising, transform)
                 
                 # Check for NaNs before PCA
